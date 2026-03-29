@@ -50,6 +50,7 @@ from config import (
     CM_PORT,
     EXT_LANG_MAP,
     SYSTEM_DIRS,
+    REMOTE_FILERS,
 )
 from icons import get_icon, ICONS
 from svgs import (
@@ -65,6 +66,7 @@ from svgs import (
     SVG_COPY,
     SVG_UPLOAD_BTN,
     SVG_CM_UPLOAD,
+    SVG_FILERS,
 )
 from charts import download_and_extract_chart, HAS_REQUESTS
 
@@ -237,6 +239,21 @@ _CHARTS_BTN_HTML = (
     f"{SVG_DOWNLOAD} ChartMuseum</a>"
 )
 
+_FILERS_DROPDOWN = ""
+if REMOTE_FILERS:
+    _items = "".join(
+        f'<a class="filer-item" href="/__remote__/{k}/">'
+        f'{html_module.escape(v["label"])}</a>'
+        for k, v in REMOTE_FILERS.items()
+    )
+    _FILERS_DROPDOWN = (
+        '<div class="filer-dropdown">'
+        '<button class="hdr-btn" onclick="toggleFilerMenu(event)">'
+        f"{SVG_FILERS} Filers</button>"
+        f'<div class="filer-menu" id="filer-menu">{_items}</div>'
+        "</div>"
+    )
+
 
 def _render_header(show_upload=True, show_charts=True):
     """Render the header partial."""
@@ -251,6 +268,7 @@ def _render_header(show_upload=True, show_charts=True):
         "header.html",
         UPLOAD_BUTTON=upload_btn,
         CHARTS_BUTTON=charts_btn,
+        FILERS_BUTTON=_FILERS_DROPDOWN,
     )
 
 
@@ -269,6 +287,40 @@ def _render_page(
         EXTRA_HEAD=extra_head,
         EXTRA_SCRIPTS=extra_scripts,
     )
+
+
+# ── Apache directory listing parser ────────────────────────────────────
+
+_APACHE_ROW_RE = re.compile(
+    r'alt="\[([^\]]*)\]".*?'
+    r'<a\s+href="([^"]+)"[^>]*>([^<]+)</a>\s*'
+    r'</td>\s*<td[^>]*>\s*(.*?)\s*</td>\s*'
+    r'<td[^>]*>\s*(.*?)\s*</td>',
+    re.DOTALL,
+)
+
+
+def _parse_apache_listing(html_text):
+    entries = []
+    for m in _APACHE_ROW_RE.finditer(html_text):
+        kind = m.group(1).strip()
+        href = m.group(2).strip()
+        display = m.group(3).strip()
+        date_str = m.group(4).strip().replace("&nbsp;", "").strip()
+        size_str = m.group(5).strip().replace("&nbsp;", "").strip()
+        if kind == "PARENTDIR" or kind == "ICO":
+            continue
+        is_dir = kind == "DIR" or href.endswith("/")
+        entries.append(
+            {
+                "name": display,
+                "href": href,
+                "is_dir": is_dir,
+                "date": date_str or "-",
+                "size": size_str if size_str and size_str != "-" else "-",
+            }
+        )
+    return entries
 
 
 # ── HTTP Handler ───────────────────────────────────────────────────────
@@ -298,6 +350,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
 
         if path.startswith("/__static__/"):
             return self._serve_static(path[len("/__static__/") :])  # noqa: E203
+        if path.startswith("/__remote__/"):
+            return self._serve_remote_page(path[len("/__remote__/") :])  # noqa: E203
         if path == "/__charts__":
             return self._serve_charts_page()
         if path.startswith("/__viewer__"):
@@ -855,6 +909,184 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             header_html=_render_header(show_upload=False, show_charts=False),
             modals=import_modal,
             extra_scripts='<script src="/__static__/js/charts.js"></script>',
+        )
+        self._send_html(html)
+
+    # ── Remote Filer Browser ────────────────────────────────────
+
+    def _serve_remote_page(self, rel_path):
+        stripped = rel_path.strip("/")
+        parts = stripped.split("/", 1)
+        filer_key = parts[0] if parts else ""
+        subpath = (parts[1] + "/") if len(parts) > 1 and parts[1] else ""
+
+        filer = REMOTE_FILERS.get(filer_key)
+        if not filer:
+            self.send_error(404, "Unknown filer")
+            return
+
+        base_url = filer["url"].rstrip("/") + "/"
+        remote_url = base_url + subpath
+        esc = html_module.escape
+
+        if rel_path and not rel_path.endswith("/"):
+            self.send_response(302)
+            self.send_header("Location", remote_url)
+            self.end_headers()
+            return
+
+        try:
+            req = urllib.request.Request(
+                remote_url,
+                headers={"User-Agent": "Caffrey/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                raw_html = resp.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            error_content = (
+                '<div class="empty-state" style="padding:40px">'
+                f"<p>Could not reach <b>{esc(filer['label'])}</b></p>"
+                f"<p style=\"font-size:12px;color:var(--text-muted)\">"
+                f"{esc(str(exc))}</p>"
+                f'<p style="margin-top:12px">'
+                f'<a class="hdr-btn" href="/{esc(remote_url)}">'
+                f"Try direct link</a></p></div>"
+            )
+            html = _render_page(
+                f"Error — {filer['label']}",
+                error_content,
+                header_html=_render_header(show_upload=False, show_charts=False),
+            )
+            self._send_html(html)
+            return
+
+        entries = _parse_apache_listing(raw_html)
+
+        display_sub = "/" + subpath if subpath else ""
+        bc = (
+            f'<a class="bc-chip" href="/">{SVG_HOME} Home</a>'
+            f'<span class="bc-sep">/</span>'
+            f'<a class="bc-chip" href="/__remote__/{filer_key}/">'
+            f'{esc(filer["label"])}</a>'
+        )
+        if subpath:
+            crumbs = [p for p in subpath.split("/") if p]
+            for i, part in enumerate(crumbs):
+                qp = "/__remote__/" + filer_key + "/" + "/".join(crumbs[: i + 1]) + "/"
+                bc += (
+                    f'<span class="bc-sep">/</span>'
+                    f'<a class="bc-chip" href="{qp}">{esc(part)}</a>'
+                )
+
+        sort_bar = (
+            '<div class="sort-bar">'
+            '<span class="sort-label">Sort:</span>'
+            '<button class="sort-btn active" data-sort="name"'
+            " onclick=\"sortFiles('name',this)\">Name</button>"
+            '<button class="sort-btn" data-sort="size"'
+            " onclick=\"sortFiles('size',this)\">Size</button>"
+            '<button class="sort-btn" data-sort="date"'
+            " onclick=\"sortFiles('date',this)\">Date</button>"
+            '<div class="sort-spacer"></div>'
+            '<span class="cm-note-warn" style="padding:0">'
+            f'<a href="{esc(remote_url)}" target="_blank"'
+            f' style="color:inherit;text-decoration:none">'
+            f"Open on source server &#8599;</a></span>"
+            "</div>"
+        )
+
+        items = []
+        if subpath:
+            parent_crumbs = subpath.rstrip("/").rsplit("/", 1)
+            parent_href = (
+                f"/__remote__/{filer_key}/"
+                + (parent_crumbs[0] + "/" if len(parent_crumbs) > 1 else "")
+            )
+            items.append(
+                f'<tr class="file-item">'
+                f'<td class="ft-name">'
+                f'<a class="file-link" href="{parent_href}">'
+                f'{ICONS["parent"]}'
+                f'<span class="file-name">.. (Parent Directory)</span>'
+                f"</a></td>"
+                f'<td class="ft-size"></td>'
+                f'<td class="ft-date"></td>'
+                f'<td class="ft-actions"></td>'
+                f"</tr>"
+            )
+
+        for entry in entries:
+            name = entry["name"]
+            is_dir = entry["is_dir"]
+
+            if is_dir:
+                link = f"/__remote__/{filer_key}/{subpath}{entry['href']}"
+                icon = get_icon(name, is_dir=True)
+            else:
+                link = remote_url + entry["href"]
+                icon = get_icon(name, is_dir=False)
+
+            raw_size = 0
+            size_str = entry["size"]
+            if size_str != "-":
+                s = size_str.upper().strip()
+                try:
+                    if s.endswith("G"):
+                        raw_size = int(float(s[:-1]) * 1073741824)
+                    elif s.endswith("M"):
+                        raw_size = int(float(s[:-1]) * 1048576)
+                    elif s.endswith("K"):
+                        raw_size = int(float(s[:-1]) * 1024)
+                    else:
+                        raw_size = int(s)
+                except (ValueError, IndexError):
+                    pass
+
+            actions = ""
+            if not is_dir:
+                actions = (
+                    f'<a class="act-btn dl-btn" title="Download"'
+                    f' href="{esc(link)}" download>{SVG_DOWNLOAD}</a>'
+                )
+
+            date_str = entry["date"]
+            items.append(
+                f'<tr class="file-item"'
+                f' data-name="{esc(name.lower())}"'
+                f' data-size="{raw_size}"'
+                f' data-mtime="0"'
+                f' data-isdir="{"1" if is_dir else "0"}">'
+                f'<td class="ft-name">'
+                f'<a class="file-link" href="{esc(link)}"'
+                f'{" target=\"_blank\"" if not is_dir else ""}>'
+                f"{icon}"
+                f'<span class="file-name">{esc(name)}</span></a></td>'
+                f'<td class="ft-size">{esc(size_str)}</td>'
+                f'<td class="ft-date">{esc(date_str)}</td>'
+                f'<td class="ft-actions">'
+                f'<div class="file-actions">{actions}</div></td>'
+                f"</tr>"
+            )
+
+        if not entries:
+            items.append(
+                '<tr><td colspan="4" class="empty-state">'
+                "This directory is empty</td></tr>"
+            )
+
+        content = (
+            f'<div class="breadcrumb">{bc}</div>'
+            f"{sort_bar}"
+            f'<div class="file-list-wrap">'
+            f'<table class="file-table">'
+            f'<tbody class="file-list">{"".join(items)}</tbody>'
+            f"</table></div>"
+        )
+
+        html = _render_page(
+            f'{filer["label"]} — {display_sub or "/"}',
+            content,
+            header_html=_render_header(show_upload=False, show_charts=False),
         )
         self._send_html(html)
 

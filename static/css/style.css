@@ -144,6 +144,33 @@ a:hover {
     color: var(--text-primary);
     border-color: var(--accent);
 }
+/* ── Filer dropdown ──────────────────────────────────────────── */
+.filer-dropdown { position: relative; }
+.filer-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 210px;
+    background: var(--bg-card-solid);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 6px 0;
+    z-index: 200;
+}
+.filer-menu.open { display: block; }
+.filer-item {
+    display: block;
+    padding: 9px 16px;
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background var(--transition);
+}
+.filer-item:hover { background: var(--bg-hover); color: var(--accent); }
+
 .hdr-btn svg {
     width: 16px;
     height: 16px;

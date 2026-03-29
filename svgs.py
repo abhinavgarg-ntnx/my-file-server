@@ -136,3 +136,11 @@ SVG_CM_UPLOAD = (
     " A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3"
     ' m0 0l4.5 4.5M12 3v13.5"/></svg>'
 )
+
+SVG_FILERS = (
+    '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">'
+    '<path stroke-linecap="round" stroke-linejoin="round" '
+    'd="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4'
+    "a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2"
+    'v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>'
+)

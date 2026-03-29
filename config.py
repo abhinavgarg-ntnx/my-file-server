@@ -79,3 +79,36 @@ EXT_LANG_MAP = {
 }
 
 SYSTEM_DIRS = {"charts", "helm-charts"}
+
+# ── Remote filers (Apache httpd directory listings) ───────────────────
+
+REMOTE_FILERS = {
+    "pc-builds": {
+        "label": "PC Builds",
+        "url": "http://endor.dyn.nutanix.com/builds/pc-builds/master/",
+    },
+    "ncc-builds": {
+        "label": "NCC Builds",
+        "url": "http://endor.dyn.nutanix.com/builds/ncc-builds/master/",
+    },
+    "msp-platform": {
+        "label": "MSP Platform",
+        "url": "http://phx-fs.corp.nutanix.com/releases/MicroservicesPlatform/",
+    },
+    "ncm-filer": {
+        "label": "NCM Filer",
+        "url": "http://ncmfiler.nutanixqa.com/LCM/",
+    },
+    "lcm-cci": {
+        "label": "LCM CCI Builds",
+        "url": "http://builds.dyn.nutanix.com/lcm-cci-builds/",
+    },
+    "nutanix-central": {
+        "label": "Nutanix Central",
+        "url": "http://endor.dyn.nutanix.com/GoldImages/nutanix_central/",
+    },
+    "calm-filer": {
+        "label": "CALM Filer",
+        "url": "http://10.40.64.33/GoldImages/",
+    },
+}

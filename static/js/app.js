@@ -59,6 +59,19 @@
   }
   window._toast = toast;
 
+  /* ── Filer dropdown ─────────────────────────────────────────── */
+
+  window.toggleFilerMenu = function (e) {
+    e.stopPropagation();
+    var menu = document.getElementById("filer-menu");
+    if (menu) menu.classList.toggle("open");
+  };
+
+  document.addEventListener("click", function () {
+    var menu = document.getElementById("filer-menu");
+    if (menu) menu.classList.remove("open");
+  });
+
   /* ── Upload ──────────────────────────────────────────────────── */
 
   window.toggleUpload = function () {
