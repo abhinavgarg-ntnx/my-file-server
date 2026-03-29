@@ -9,8 +9,10 @@ import socketserver
 import os
 import sys
 import json
+import re
 import shutil
 import logging
+import subprocess
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -39,8 +41,24 @@ from config import (
     VIEWABLE_EXTENSIONS,
     INLINE_EXTENSIONS,
     CM_PORT,
+    EXT_LANG_MAP,
+    SYSTEM_DIRS,
 )
 from icons import get_icon, ICONS
+from svgs import (
+    SVG_HOME,
+    SVG_VIEW,
+    SVG_DOWNLOAD,
+    SVG_DELETE,
+    SVG_BACK,
+    SVG_EDIT,
+    SVG_RENAME,
+    SVG_UPLOAD_CLOUD,
+    SVG_UPLOAD_CLOUD_SM,
+    SVG_COPY,
+    SVG_UPLOAD_BTN,
+    SVG_CM_UPLOAD,
+)
 from charts import download_and_extract_chart, HAS_REQUESTS
 
 log = logging.getLogger(__name__)
@@ -63,21 +81,35 @@ def render_template(name, **kwargs):
     html = _load_template(name)
     for key, value in kwargs.items():
         html = html.replace("{{" + key.upper() + "}}", str(value))
-    # Clear any remaining unreplaced placeholders
-    import re
-
     html = re.sub(r"\{\{[A-Z_]+\}\}", "", html)
     return html
 
 
+_cm_version_cache = None
+
+
+def _get_cm_version():
+    global _cm_version_cache
+    if _cm_version_cache is not None:
+        return _cm_version_cache
+    try:
+        result = subprocess.run(
+            ["chartmuseum", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        raw = (result.stdout.strip() or result.stderr.strip())
+        m = re.search(r"(\d+\.\d+\.\d+)", raw)
+        _cm_version_cache = f"v{m.group(1)}" if m else raw or ""
+    except Exception:
+        _cm_version_cache = ""
+    return _cm_version_cache
+
+
 _CHARTS_BTN_HTML = (
-    '<a href="/__charts__" class="hdr-btn" title="Helm Charts">'
-    '<svg fill="none" stroke="currentColor" stroke-width="2"'
-    ' viewBox="0 0 24 24"><path stroke-linecap="round"'
-    ' stroke-linejoin="round" d="M3 16.5v2.25'
-    "A2.25 2.25 0 0 0 5.25 21h13.5"
-    "A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12L12 16.5"
-    'm0 0L7.5 12m4.5 4.5V3"/></svg> Charts</a>'
+    '<a href="/__charts__" class="hdr-btn" title="ChartMuseum">'
+    f"{SVG_DOWNLOAD} ChartMuseum</a>"
 )
 
 
@@ -87,13 +119,7 @@ def _render_header(show_upload=True, show_charts=True):
     if show_upload:
         upload_btn = (
             '<button class="hdr-btn" onclick="toggleUpload()">'
-            '<svg fill="none" stroke="currentColor" stroke-width="2"'
-            ' viewBox="0 0 24 24"><path stroke-linecap="round"'
-            ' stroke-linejoin="round" d="M3 16.5v2.25'
-            "A2.25 2.25 0 0 0 5.25 21h13.5"
-            "A2.25 2.25 0 0 0 21 18.75V16.5"
-            "m-13.5-9L12 3m0 0l4.5 4.5"
-            'M12 3v13.5"/></svg> Upload</button>'
+            f"{SVG_UPLOAD_BTN} Upload</button>"
         )
     charts_btn = _CHARTS_BTN_HTML if show_charts else ""
     return render_template(
@@ -120,96 +146,8 @@ def _render_page(
     )
 
 
-# ── Inline SVG constants used in HTML building ────────────────────────
-
-SVG_HOME = (
-    '<svg width="14" height="14" fill="none" stroke="currentColor"'
-    ' stroke-width="2" viewBox="0 0 24 24">'
-    '<path stroke-linecap="round" stroke-linejoin="round" '
-    'd="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75'
-    " 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4"
-    ".875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1"
-    ".125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8."
-    '25 21h8.25"/></svg>'
-)
-SVG_VIEW = (
-    '<svg fill="none" stroke="currentColor" stroke-width="2"'
-    ' viewBox="0 0 24 24">'
-    '<path stroke-linecap="round" stroke-linejoin="round" '
-    'd="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36'
-    " 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07"
-    ".431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8"
-    '.573-3.007-9.963-7.178z"/>'
-    '<path stroke-linecap="round" stroke-linejoin="round"'
-    ' d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>'
-)
-SVG_DOWNLOAD = (
-    '<svg fill="none" stroke="currentColor" stroke-width="2"'
-    ' viewBox="0 0 24 24">'
-    '<path stroke-linecap="round" stroke-linejoin="round" '
-    'd="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25'
-    " 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5"
-    ' 4.5V3"/></svg>'
-)
-_DEL_D = (
-    "M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052"
-    ".682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25"
-    " 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4"
-    ".772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12"
-    " .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 01"
-    "3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51"
-    ".964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.2"
-    "01v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-)
-SVG_DELETE = (
-    '<svg fill="none" stroke="currentColor" stroke-width="2"'
-    ' viewBox="0 0 24 24">'
-    '<path stroke-linecap="round" stroke-linejoin="round" '
-    f'd="{_DEL_D}"/></svg>'
-)
-SVG_BACK = (
-    '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">'
-    '<path stroke-linecap="round" stroke-linejoin="round"'
-    ' d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>'
-)
-_EDIT_D = (
-    "M16.862 4.487l1.687-1.688a1.875 1.875 0 1 1 2.652 2.652"
-    "L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685"
-    "a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931z"
-    "M19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21"
-    "H5.25A2.25 2.25 0 0 1 3 18.75V8.25"
-    "A2.25 2.25 0 0 1 5.25 6H10"
-)
-SVG_EDIT = (
-    '<svg fill="none" stroke="currentColor" stroke-width="2"'
-    ' viewBox="0 0 24 24">'
-    '<path stroke-linecap="round" stroke-linejoin="round"'
-    f' d="{_EDIT_D}"/></svg>'
-)
-SVG_UPLOAD_CLOUD_SM = (
-    '<svg width="16" height="16" fill="none" stroke="currentColor"'
-    ' stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round"'
-    ' stroke-linejoin="round" d="M3 16.5v2.25'
-    "A2.25 2.25 0 0 0 5.25 21h13.5"
-    "A2.25 2.25 0 0 0 21 18.75V16.5"
-    "m-13.5-9L12 3m0 0l4.5 4.5"
-    'M12 3v13.5"/></svg>'
-)
-SVG_UPLOAD_CLOUD = (
-    '<svg width="48" height="48" fill="none" stroke="currentColor"'
-    ' stroke-width="1.5" viewBox="0 0 24 24">'
-    '<path stroke-linecap="round" stroke-linejoin="round"'
-    ' d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3'
-    "M6.75 19.5"
-    "a4.5 4.5 0 0 1-1.41-8.775"
-    " 5.25 5.25 0 0 1 10.338-2.32"
-    " 3.75 3.75 0 0 1 3.572 5.345"
-    ' 4.5 4.5 0 0 1-2.76 5.75"/></svg>'
-)
-
 # ── HTTP Handler ───────────────────────────────────────────────────────
 
-# MIME types for static assets
 _STATIC_MIME = {
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
@@ -265,6 +203,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return self._handle_newfile()
         if path == "/__api__/savefile":
             return self._handle_savefile()
+        if path == "/__api__/rename":
+            return self._handle_rename()
         if path == "/__api__/chart-download":
             return self._handle_chart_download()
         if path.startswith("/__api__/cm/"):
@@ -338,7 +278,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "public, max-age=3600")
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
         self.end_headers()
         self.wfile.write(data)
 
@@ -356,6 +296,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         )
         displaypath = urllib.parse.unquote(self.path, errors="surrogatepass")
         is_cm_dir = self._is_cm_protected(path)
+        show_upload = not is_cm_dir
+        esc = html_module.escape
 
         # Breadcrumb
         bc = f'<a class="bc-chip" href="/">{SVG_HOME} Home</a>'
@@ -371,54 +313,62 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     + "/"
                 )
                 bc += (
-                    '<span class="bc-sep">/</span>'
-                    f'<a class="bc-chip" href="{qp}">'
-                    f"{html_module.escape(part)}</a>"
+                    f'<span class="bc-sep">/</span>'
+                    f'<a class="bc-chip" href="{qp}">{esc(part)}</a>'
                 )
 
-        # Upload section (hidden in CM dirs)
+        # Upload section
         upload_html = ""
-        show_upload = not is_cm_dir
         if show_upload:
             upload_html = (
-                f'<div id="upload-section" class="upload-section">'
-                f'  <div id="upload-zone" class="upload-zone">'
-                f'    <div class="upload-icon">{SVG_UPLOAD_CLOUD}</div>'
-                f"    <p>Drag files here or click to browse</p>"
-                f'    <input type="file" id="upload-input" multiple>'
-                f'    <input type="hidden" id="upload-dir"'
-                f'     value="{html_module.escape(displaypath)}">'
-                f"  </div>"
-                f'  <div id="upload-progress" class="upload-progress">'
-                f'    <div class="progress-bar">'
-                f'<div id="progress-fill" class="progress-fill"></div></div>'
-                f"  </div>"
-                f"</div>"
+                '<div id="upload-section" class="upload-section">'
+                f'<div id="upload-zone" class="upload-zone">'
+                f'<div class="upload-icon">{SVG_UPLOAD_CLOUD}</div>'
+                "<p>Drag files here or click to browse</p>"
+                '<input type="file" id="upload-input" multiple>'
+                f'<input type="hidden" id="upload-dir" value="{esc(displaypath)}">'
+                "</div>"
+                '<div id="upload-progress" class="upload-progress">'
+                '<div class="progress-bar">'
+                '<div id="progress-fill" class="progress-fill"></div></div>'
+                "</div></div>"
             )
 
-        # Dir toolbar (new folder / new file)
-        dir_toolbar = ""
+        # Sort bar (with create buttons on the right)
+        sort_right = ""
         if show_upload:
-            esc_dp = html_module.escape(displaypath, quote=True)
-            dir_toolbar = (
-                f'<div class="dir-toolbar">'
-                f'  <button class="hdr-btn" onclick="promptNewFolder(\'{esc_dp}\')">'
-                f"    + Folder</button>"
-                f'  <button class="hdr-btn" onclick="promptNewFile(\'{esc_dp}\')">'
-                f"    + File</button>"
-                f"</div>"
+            esc_dp = esc(displaypath, quote=True)
+            sort_right = (
+                '<div class="sort-spacer"></div>'
+                f'<button class="hdr-btn sm" '
+                f"onclick=\"showNewFolderModal('{esc_dp}')\">"
+                "+ Folder</button>"
+                f'<button class="hdr-btn sm" '
+                f"onclick=\"showNewFileModal('{esc_dp}')\">"
+                "+ File</button>"
             )
         elif is_cm_dir:
-            dir_toolbar = (
-                '<div class="dir-toolbar">'
+            sort_right = (
+                '<div class="sort-spacer"></div>'
                 '<span class="cm-note-warn" style="padding:0">'
                 "Read-only &mdash; managed by ChartMuseum</span>"
-                "</div>"
             )
+
+        sort_bar = (
+            '<div class="sort-bar">'
+            '<span class="sort-label">Sort:</span>'
+            '<button class="sort-btn active" data-sort="name"'
+            " onclick=\"sortFiles('name',this)\">Name</button>"
+            '<button class="sort-btn" data-sort="size"'
+            " onclick=\"sortFiles('size',this)\">Size</button>"
+            '<button class="sort-btn" data-sort="date"'
+            " onclick=\"sortFiles('date',this)\">Date</button>"
+            f"{sort_right}"
+            "</div>"
+        )
 
         # File items
         items = []
-
         if displaypath != "/":
             parent = os.path.dirname(displaypath.rstrip("/"))
             if not parent or parent == "/":
@@ -433,11 +383,16 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     + "/"
                 )
             items.append(
-                f'<li class="file-item">'
+                f'<tr class="file-item">'
+                f'<td class="ft-name">'
                 f'<a class="file-link" href="{parent_url}">'
                 f'{ICONS["parent"]}'
                 f'<span class="file-name">.. (Parent Directory)</span>'
-                f"</a></li>"
+                f"</a></td>"
+                f'<td class="ft-size"></td>'
+                f'<td class="ft-date"></td>'
+                f'<td class="ft-actions"></td>'
+                f"</tr>"
             )
 
         for name in entries:
@@ -465,14 +420,16 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             )
 
             try:
-                size_str = (
-                    "-" if is_dir else self._format_size(os.path.getsize(fullname))
-                )
-                mtime_str = datetime.fromtimestamp(os.path.getmtime(fullname)).strftime(
-                    "%Y-%m-%d %H:%M"
-                )
+                raw_size = 0 if is_dir else os.path.getsize(fullname)
+                raw_mtime = os.path.getmtime(fullname)
+                size_str = "-" if is_dir else self._format_size(raw_size)
+                mtime_str = datetime.fromtimestamp(raw_mtime).strftime("%Y-%m-%d %H:%M")
             except Exception:
+                raw_size, raw_mtime = 0, 0
                 size_str, mtime_str = "-", "-"
+
+            is_system = is_dir and displaypath == "/" and name in SYSTEM_DIRS
+            system_tag = ' <span class="sys-tag">System</span>' if is_system else ""
 
             actions = ""
             if is_viewable:
@@ -496,46 +453,66 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     f'<a class="act-btn dl-btn" title="Download"'
                     f' href="{link}" download>{SVG_DOWNLOAD}</a>'
                 )
-            if not is_cm_dir:
-                esc_link = html_module.escape(link, quote=True).replace("'", "\\'")
-                esc_disp = html_module.escape(display, quote=True).replace("'", "\\'")
+            if not is_cm_dir and not is_system:
+                ren_path = esc(link.rstrip("/"), quote=True).replace("'", "\\'")
+                ren_name = esc(name, quote=True).replace("'", "\\'")
+                actions += (
+                    f'<button class="act-btn ren-btn" title="Rename"'
+                    f' onclick="event.preventDefault();event.stopPropagation();'
+                    f"showRenameModal('{ren_path}','{ren_name}')\">"
+                    f"{SVG_RENAME}</button>"
+                )
+                el = esc(link, quote=True).replace("'", "\\'")
+                ed = esc(display, quote=True).replace("'", "\\'")
                 actions += (
                     f'<button class="act-btn del-btn" title="Delete"'
                     f' onclick="event.preventDefault();event.stopPropagation();'
-                    f"showDeleteModal('{esc_link}','{esc_disp}')\">"
-                    f"{SVG_DELETE}</button>"
+                    f"showDeleteModal('{el}','{ed}')\">{SVG_DELETE}</button>"
                 )
 
-            esc_name = html_module.escape(display)
             items.append(
-                f'<li class="file-item">'
+                f'<tr class="file-item"'
+                f' data-name="{esc(name.lower())}"'
+                f' data-size="{raw_size}"'
+                f' data-mtime="{int(raw_mtime)}"'
+                f' data-isdir="{"1" if is_dir else "0"}">'
+                f'<td class="ft-name">'
                 f'<a class="file-link" href="{file_link}">{icon}'
-                f'<span class="file-name">{esc_name}</span></a>'
-                f'<div class="file-meta">'
-                f"<span>{size_str}</span>"
-                f"<span>{mtime_str}</span></div>"
-                f'<div class="file-actions">{actions}</div>'
-                f"</li>"
+                f'<span class="file-name">{esc(display)}{system_tag}</span></a></td>'
+                f'<td class="ft-size">{size_str}</td>'
+                f'<td class="ft-date">{mtime_str}</td>'
+                f'<td class="ft-actions">'
+                f'<div class="file-actions">{actions}</div></td>'
+                f"</tr>"
             )
 
         if not entries:
-            items.append('<li class="empty-state">This directory is empty</li>')
+            items.append(
+                '<tr><td colspan="4" class="empty-state">'
+                "This directory is empty</td></tr>"
+            )
 
         content = (
             f'<div class="breadcrumb">{bc}</div>'
-            f"{dir_toolbar}"
             f"{upload_html}"
+            f"{sort_bar}"
             f'<div class="file-list-wrap">'
-            f'<ul class="file-list">{"".join(items)}</ul>'
-            f"</div>"
+            f'<table class="file-table">'
+            f'<tbody class="file-list">{"".join(items)}</tbody>'
+            f"</table></div>"
         )
 
-        delete_modal = _load_template("delete_modal.html") if not is_cm_dir else ""
+        modals = ""
+        if not is_cm_dir:
+            modals = _load_template("delete_modal.html") + _load_template(
+                "input_modal.html"
+            )
+
         html = _render_page(
             f"Caffrey's Treasure — {displaypath}",
             content,
             header_html=_render_header(show_upload=show_upload),
-            modals=delete_modal,
+            modals=modals,
         )
 
         encoded = html.encode("utf-8", "surrogateescape")
@@ -576,49 +553,74 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             "%Y-%m-%d %H:%M"
         )
 
-        lines = content.split("\n")
-        viewer_lines = []
-        for i, line in enumerate(lines, 1):
-            escaped = html_module.escape(line)
-            viewer_lines.append(
-                f'<div class="viewer-line"><span class="viewer-ln">{i}</span>'
-                f'<span class="viewer-code">{escaped}</span></div>'
-            )
+        esc = html_module.escape
+        prism_lang = EXT_LANG_MAP.get(ext, "none")
+        escaped_content = esc(content)
+
+        truncated_msg = ""
         if truncated:
-            viewer_lines.append(
-                f'<div class="viewer-line"><span class="viewer-ln">...</span>'
-                f'<span class="viewer-code" style="color:var(--warning)">'
-                f"[File truncated — showing first {self._format_size(max_size)} of {size_str}]</span></div>"
+            truncated_msg = (
+                '<div style="padding:8px 16px;font-size:12px;'
+                'color:var(--warning)">'
+                f"[Truncated — first {self._format_size(max_size)} "
+                f"of {size_str}]</div>"
             )
 
         parent_dir = os.path.dirname(file_path.rstrip("/"))
         parent_url = parent_dir + "/" if parent_dir and parent_dir != "/" else "/"
 
-        extra_scripts = ""
+        prism_head = (
+            '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/'
+            "prismjs@1.29.0/plugins/line-numbers/"
+            'prism-line-numbers.min.css">'
+        )
+
+        json_pretty = ""
         if ext == ".json":
-            extra_scripts = (
-                "<script>window.enhanceJsonViewer && enhanceJsonViewer();</script>"
+            json_pretty = (
+                "<script>"
+                'var _c=document.querySelector(".viewer-wrap code");'
+                "if(_c)try{_c.textContent="
+                "JSON.stringify(JSON.parse(_c.textContent),null,2)}"
+                "catch(e){}"
+                "</script>"
             )
 
-        page_content = (
-            f'<div class="viewer-header">'
-            f'  <a href="{parent_url}" class="hdr-btn">{SVG_BACK} Back</a>'
-            f'  <div style="flex:1">'
-            f'    <div style="font-weight:600;font-size:16px">{html_module.escape(filename)}</div>'
-            f'    <div class="file-info">{size_str} &middot; Modified {mtime_str}</div>'
-            f"  </div>"
-            f'  <a href="{file_path}" class="hdr-btn" download>{SVG_DOWNLOAD} Download</a>'
-            f"</div>"
-            f'<div class="viewer-wrap">'
-            f'  <div class="viewer-content">{"".join(viewer_lines)}</div>'
-            f"</div>"
+        prism_scripts = (
+            "<script>window.Prism=window.Prism||{};"
+            "Prism.manual=true;</script>"
+            '<script src="https://cdn.jsdelivr.net/npm/'
+            'prismjs@1.29.0/prism.min.js"></script>'
+            '<script src="https://cdn.jsdelivr.net/npm/'
+            "prismjs@1.29.0/plugins/line-numbers/"
+            'prism-line-numbers.min.js"></script>'
+            '<script src="https://cdn.jsdelivr.net/npm/'
+            "prismjs@1.29.0/plugins/autoloader/"
+            'prism-autoloader.min.js"></script>'
+            + json_pretty
+            + "<script>Prism.highlightAll();</script>"
+        )
+
+        page_content = render_template(
+            "viewer_page.html",
+            PARENT_URL=parent_url,
+            SVG_BACK=SVG_BACK,
+            SVG_DOWNLOAD=SVG_DOWNLOAD,
+            FILENAME=esc(filename),
+            SIZE=size_str,
+            MTIME=mtime_str,
+            FILE_PATH=file_path,
+            LANG=prism_lang,
+            CODE_CONTENT=escaped_content,
+            TRUNCATED_MSG=truncated_msg,
         )
 
         html = _render_page(
             f"View — {filename}",
             page_content,
             header_html=_render_header(show_upload=False),
-            extra_scripts=extra_scripts,
+            extra_head=prism_head,
+            extra_scripts=prism_scripts,
         )
 
         encoded = html.encode("utf-8", "surrogateescape")
@@ -641,130 +643,84 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 "<code>pip install requests</code></p>"
             )
 
-        svg_copy = (
-            '<svg width="14" height="14" fill="none"'
-            ' stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">'
-            '<path stroke-linecap="round" stroke-linejoin="round"'
-            ' d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192'
-            ".373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0"
-            " 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192"
-            "a48.424 48.424 0 0 0-1.123-.08M15.75 18.75v-1.875a3.375"
-            " 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125"
-            "-1.125v-1.5A3.375 3.375 0 0 0 6.375 7.5H5.25m11.9-3.664"
-            "A2.251 2.251 0 0 0 15 2.25h-1.5a2.251 2.251 0 0 0-2.15"
-            " 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035"
-            "-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125"
-            " 1.125v12c0 .621.504 1.125 1.125 1.125h9.75c.621 0"
-            ' 1.125-.504 1.125-1.125V16.5a9 9 0 0 0-9-9z"/></svg>'
+        cm_version = _get_cm_version()
+        cm_ver_html = html_module.escape(cm_version) if cm_version else ""
+
+        page_content = render_template(
+            "charts_page.html",
+            SVG_BACK=SVG_BACK,
+            SVG_COPY=SVG_COPY,
+            SVG_DOWNLOAD=SVG_DOWNLOAD,
+            SVG_UPLOAD_CLOUD_SM=SVG_UPLOAD_CLOUD_SM,
+            SVG_CM_UPLOAD=SVG_CM_UPLOAD,
+            REPO_URL=repo_url,
+            CM_VERSION=cm_ver_html,
         )
 
-        page_content = (
-            # ── Top bar: back + title + repo command
-            '<div class="cm-topbar">'
-            '  <div class="cm-topbar-left">'
-            f'    <a href="/" class="cm-back-btn" title="Back to Files">'
-            f"      {SVG_BACK}</a>"
-            "    <div>"
-            '      <h2 class="cm-title">Helm Chart Repository</h2>'
-            '      <p class="cm-subtitle">'
-            "        Powered by ChartMuseum</p>"
-            "    </div>"
-            "  </div>"
-            '  <div class="cm-repo-cmd">'
-            "    <label>Add this repo</label>"
-            f'    <div class="cm-cmd-row">'
-            f'      <code id="repo-cmd">'
-            f"helm repo add caffrey {repo_url}</code>"
-            f'      <button class="cm-copy-btn" onclick="copyRepoCmd()"'
-            f'       title="Copy">{svg_copy}</button>'
-            "    </div>"
-            "  </div>"
-            "</div>"
-            # ── Toolbar: health + search + buttons
-            '<div class="cm-controls">'
-            '  <div class="cm-health" id="cm-health">'
-            '    <span class="cm-dot" id="cm-dot"></span>'
-            '    <span id="cm-health-text">Checking...</span>'
-            "  </div>"
-            '  <div class="cm-toolbar">'
-            '    <input type="search" id="cm-search"'
-            '     placeholder="Search charts..." autocomplete="off">'
-            '    <span class="cm-count" id="cm-count"></span>'
-            '    <button class="hdr-btn" onclick="cmToggleUpload()">'
-            f"      {SVG_UPLOAD_CLOUD_SM} Upload</button>"
-            '    <button class="hdr-btn" onclick="cmShowImport()">'
-            f"      {SVG_DOWNLOAD} Import</button>"
-            "  </div>"
-            "</div>"
-            # ── Upload zone (hidden, toggled)
-            '<div id="cm-upload-section" class="upload-section">'
-            '  <div class="cm-upload-zone" id="cm-upload-zone">'
-            '    <div class="cm-upload-icon">'
-            '      <svg width="28" height="28" fill="none"'
-            '       stroke="currentColor" stroke-width="1.5"'
-            '       viewBox="0 0 24 24"><path stroke-linecap="round"'
-            '       stroke-linejoin="round"'
-            '       d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5'
-            "       A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3"
-            '       m0 0l4.5 4.5M12 3v13.5"/></svg></div>'
-            "    <p>Drop <code>.tgz</code> chart here or browse</p>"
-            '    <input type="file" id="cm-upload-input"'
-            '     accept=".tgz,.gz">'
-            "  </div>"
-            '  <div id="cm-upload-status" class="chart-status"></div>'
-            "</div>"
-            # ── Charts table
-            '<div class="cm-card">'
-            '  <table class="cm-table">'
-            "    <thead><tr>"
-            "      <th>Chart</th><th>Latest</th>"
-            "      <th>App Version</th><th>Description</th>"
-            "      <th></th>"
-            "    </tr></thead>"
-            '    <tbody id="cm-body">'
-            '      <tr><td colspan="5" class="cm-loading">'
-            "        Loading...</td></tr>"
-            "    </tbody>"
-            "  </table>"
-            "</div>"
-        )
-
-        import_modal = (
-            '<div id="import-modal" class="modal-overlay"'
-            ' onclick="if(event.target===this)cmCloseImport()">'
-            '  <div class="modal">'
-            "    <h3>Import from Artifactory</h3>"
-            "    <p>Download a Helm chart .tgz and optionally push"
-            "      it to ChartMuseum.</p>"
-            f"    {requests_note}"
-            '    <div class="form-group" style="margin-bottom:10px">'
-            "      <label>Chart Name</label>"
-            '      <input type="text" id="chart-name"'
-            '       placeholder="e.g. ncm-base"></div>'
-            '    <div class="form-group" style="margin-bottom:14px">'
-            "      <label>Version</label>"
-            '      <input type="text" id="chart-version"'
-            '       placeholder="e.g. 2.0.11"></div>'
-            '    <div id="chart-status" class="chart-status"></div>'
-            '    <div class="modal-btns">'
-            '      <button class="modal-btn cancel"'
-            '       onclick="cmCloseImport()">Cancel</button>'
-            '      <button class="modal-btn cancel"'
-            '       onclick="downloadChart(false)">Download Only</button>'
-            '      <button class="hdr-btn accent"'
-            '       onclick="downloadChart(true)">'
-            f"       {SVG_DOWNLOAD} Import &amp; Push</button>"
-            "    </div>"
-            "  </div>"
-            "</div>"
+        import_modal = render_template(
+            "import_modal.html",
+            REQUESTS_NOTE=requests_note,
+            SVG_DOWNLOAD=SVG_DOWNLOAD,
         )
 
         html = _render_page(
-            "Charts — Caffrey's Treasure",
+            "ChartMuseum — Caffrey's Treasure",
             page_content,
             header_html=_render_header(show_upload=False, show_charts=False),
             modals=import_modal,
-            extra_scripts=('<script src="/__static__/js/charts.js"></script>'),
+            extra_scripts='<script src="/__static__/js/charts.js"></script>',
+        )
+
+        encoded = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    # ── Editor Page ──────────────────────────────────────────────
+
+    def _serve_editor_page(self, file_path):
+        if not file_path:
+            self.send_error(400, "No file specified")
+            return
+
+        filename = os.path.basename(file_path)
+        ext = os.path.splitext(filename)[1].lower()
+        esc = html_module.escape
+
+        parent = os.path.dirname(file_path.rstrip("/"))
+        back_url = parent + "/" if parent and parent != "/" else "/"
+
+        lang_label = {
+            ".json": "JSON",
+            ".yaml": "YAML",
+            ".yml": "YAML",
+            ".xml": "XML",
+            ".toml": "TOML",
+            ".py": "Python",
+            ".js": "JavaScript",
+            ".sh": "Bash",
+            ".css": "CSS",
+            ".html": "HTML",
+            ".md": "Markdown",
+        }.get(ext, "Text")
+
+        page_content = render_template(
+            "editor_page.html",
+            SVG_BACK=SVG_BACK,
+            BACK_URL=esc(back_url),
+            FILENAME=esc(filename),
+            LANG_LABEL=lang_label,
+            FILE_PATH=esc(file_path, quote=True),
+            FILE_EXT=esc(ext),
+        )
+
+        html = _render_page(
+            f"Edit — {filename}",
+            page_content,
+            header_html=_render_header(show_upload=False),
+            extra_scripts='<script src="/__static__/js/editor.js"></script>',
         )
 
         encoded = html.encode("utf-8")
@@ -790,13 +746,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
 
     def _handle_upload(self):
         if cgi is None:
-            self._send_json(
-                {
-                    "success": False,
-                    "error": "Upload not supported (cgi module unavailable)",
-                },
-                500,
-            )
+            self._send_json({"success": False, "error": "Upload not supported"}, 500)
             return
 
         content_type = self.headers.get("Content-Type", "")
@@ -815,12 +765,12 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             form = cgi.FieldStorage(
                 fp=self.rfile, headers=self.headers, environ=environ
             )
-
             upload_path = form.getvalue("upload_path", "/")
             target_dir = self.translate_path(upload_path)
             if self._is_cm_protected(target_dir):
                 self._send_json(
-                    {"success": False, "error": "Cannot write to chart repository"}, 403
+                    {"success": False, "error": "Cannot write to chart repository"},
+                    403,
                 )
                 return
             os.makedirs(target_dir, exist_ok=True)
@@ -866,14 +816,16 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         local_path = self.translate_path(file_path)
         if self._is_cm_protected(local_path):
             self._send_json(
-                {"success": False, "error": "Cannot delete chart repo files"}, 403
+                {"success": False, "error": "Cannot delete chart repo files"},
+                403,
             )
             return
         real_served = os.path.realpath(self.server_dir)
         real_target = os.path.realpath(local_path)
         if not real_target.startswith(real_served):
             self._send_json(
-                {"success": False, "error": "Path outside served directory"}, 403
+                {"success": False, "error": "Path outside served directory"},
+                403,
             )
             return
 
@@ -905,7 +857,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
 
         if not name or not version:
             self._send_json(
-                {"success": False, "error": "Chart name and version required"}, 400
+                {"success": False, "error": "Chart name and version required"},
+                400,
             )
             return
 
@@ -956,7 +909,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 "/api/charts",
                 body=body,
                 headers={
-                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "Content-Type": (f"multipart/form-data; boundary={boundary}"),
                     "Content-Length": str(len(body)),
                 },
             )
@@ -969,14 +922,16 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     log.info("Pushed %s-%s to ChartMuseum", name, version)
                     return True
             log.warning(
-                "ChartMuseum push returned %s: %s", resp.status, resp_body[:200]
+                "ChartMuseum push returned %s: %s",
+                resp.status,
+                resp_body[:200],
             )
             return False
         except Exception:
             log.exception("Failed to push %s-%s to ChartMuseum", name, version)
             return False
 
-    # ── File Operations (mkdir, newfile, save, read, edit) ──────
+    # ── File Operations ──────────────────────────────────────────
 
     def _is_cm_protected(self, local_path):
         """Return True if path is inside ChartMuseum storage."""
@@ -1010,7 +965,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return
         if self._is_cm_protected(local):
             self._send_json(
-                {"success": False, "error": "Cannot write to chart repository"}, 403
+                {"success": False, "error": "Cannot write to chart repository"},
+                403,
             )
             return
         try:
@@ -1037,7 +993,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return
         if self._is_cm_protected(local):
             self._send_json(
-                {"success": False, "error": "Cannot write to chart repository"}, 403
+                {"success": False, "error": "Cannot write to chart repository"},
+                403,
             )
             return
         if os.path.exists(local):
@@ -1069,7 +1026,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return
         if self._is_cm_protected(local):
             self._send_json(
-                {"success": False, "error": "Cannot write to chart repository"}, 403
+                {"success": False, "error": "Cannot write to chart repository"},
+                403,
             )
             return
         if not os.path.isfile(local):
@@ -1081,6 +1039,73 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             log.info("Saved file %s (%d bytes)", local, len(content))
             self._send_json({"success": True})
         except Exception as e:
+            self._send_json({"success": False, "error": str(e)}, 500)
+
+    def _handle_rename(self):
+        try:
+            data = self._read_json_body()
+        except Exception:
+            self._send_json({"success": False, "error": "Invalid body"}, 400)
+            return
+
+        old_path = data.get("path", "").strip().rstrip("/")
+        new_name = data.get("newName", "").strip()
+
+        if not old_path or not new_name:
+            self._send_json(
+                {"success": False, "error": "Path and new name required"}, 400
+            )
+            return
+        if "/" in new_name or "\\" in new_name:
+            self._send_json(
+                {"success": False, "error": "Name cannot contain slashes"}, 400
+            )
+            return
+
+        local = self._safe_local(old_path)
+        if not local:
+            self._send_json({"success": False, "error": "Invalid path"}, 403)
+            return
+        if self._is_cm_protected(local):
+            self._send_json(
+                {"success": False, "error": "Cannot rename chart repo items"},
+                403,
+            )
+            return
+        if not os.path.exists(local):
+            self._send_json({"success": False, "error": "Item not found"}, 404)
+            return
+
+        basename = os.path.basename(local)
+        parent = os.path.dirname(local)
+        if (
+            os.path.realpath(parent) == os.path.realpath(self.server_dir)
+            and basename in SYSTEM_DIRS
+        ):
+            self._send_json(
+                {"success": False, "error": "Cannot rename system directories"},
+                403,
+            )
+            return
+
+        if basename == new_name:
+            self._send_json({"success": True})
+            return
+
+        new_local = os.path.join(parent, new_name)
+        if os.path.exists(new_local):
+            self._send_json(
+                {"success": False, "error": "An item with that name already exists"},
+                409,
+            )
+            return
+
+        try:
+            os.rename(local, new_local)
+            log.info("Renamed %s → %s", local, new_local)
+            self._send_json({"success": True})
+        except Exception as e:
+            log.exception("Rename failed for %s", local)
             self._send_json({"success": False, "error": str(e)}, 500)
 
     def _handle_readfile(self, file_path):
@@ -1097,123 +1122,6 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             self._send_json({"content": content, "path": file_path})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
-
-    def _serve_editor_page(self, file_path):
-        if not file_path:
-            self.send_error(400, "No file specified")
-            return
-
-        filename = os.path.basename(file_path)
-        ext = os.path.splitext(filename)[1].lower()
-        esc_path = html_module.escape(file_path, quote=True)
-        esc_name = html_module.escape(filename)
-
-        parent = os.path.dirname(file_path.rstrip("/"))
-        if not parent or parent == "/":
-            back_url = "/"
-        else:
-            back_url = parent + "/"
-
-        lang_label = {
-            ".json": "JSON",
-            ".yaml": "YAML",
-            ".yml": "YAML",
-            ".xml": "XML",
-            ".toml": "TOML",
-            ".py": "Python",
-            ".js": "JavaScript",
-            ".sh": "Bash",
-            ".css": "CSS",
-            ".html": "HTML",
-            ".md": "Markdown",
-        }.get(ext, "Text")
-
-        page_content = (
-            '<div class="editor-topbar">'
-            f'  <a href="{html_module.escape(back_url)}"'
-            f'   class="cm-back-btn" title="Back">{SVG_BACK}</a>'
-            f"  <div>"
-            f'    <h2 class="cm-title">{esc_name}</h2>'
-            f'    <p class="cm-subtitle">{lang_label} &middot; {esc_path}</p>'
-            f"  </div>"
-            f'  <div class="editor-actions">'
-            f'    <span id="editor-status" class="chart-status"></span>'
-            f'    <button class="hdr-btn accent" onclick="saveFile()">'
-            f"      Save</button>"
-            f"  </div>"
-            f"</div>"
-            f'<div class="editor-wrap">'
-            f'  <textarea id="editor-content" class="editor-textarea"'
-            f'   spellcheck="false" data-path="{esc_path}"'
-            f'   data-ext="{html_module.escape(ext)}"></textarea>'
-            f"</div>"
-        )
-
-        editor_script = (
-            "<script>"
-            "(function(){"
-            "  var ta=document.getElementById('editor-content');"
-            "  var ext=ta.dataset.ext;"
-            "  var path=ta.dataset.path;"
-            "  fetch('/__api__/readfile?path='+encodeURIComponent(path))"
-            "    .then(function(r){return r.json()})"
-            "    .then(function(d){"
-            "      if(d.content!==undefined)ta.value=d.content;"
-            "      else ta.value='Error: '+d.error;"
-            "    });"
-            "  ta.addEventListener('keydown',function(e){"
-            "    if(e.key==='Tab'){"
-            "      e.preventDefault();"
-            "      var s=ta.selectionStart,end=ta.selectionEnd;"
-            "      ta.value=ta.value.substring(0,s)+'  '+ta.value.substring(end);"
-            "      ta.selectionStart=ta.selectionEnd=s+2;"
-            "    }"
-            "    if((e.ctrlKey||e.metaKey)&&e.key==='s'){"
-            "      e.preventDefault();window.saveFile();"
-            "    }"
-            "  });"
-            "  window.saveFile=function(){"
-            "    var stat=document.getElementById('editor-status');"
-            "    var content=ta.value;"
-            "    var err=validate(content,ext);"
-            "    if(err){stat.textContent=err;stat.className='chart-status error';return}"
-            "    stat.textContent='Saving...';stat.className='chart-status';"
-            "    fetch('/__api__/savefile',{"
-            "      method:'POST',"
-            "      headers:{'Content-Type':'application/json'},"
-            "      body:JSON.stringify({path:path,content:content})"
-            "    }).then(function(r){return r.json()}).then(function(d){"
-            "      if(d.success){"
-            "        stat.textContent='Saved';stat.className='chart-status success';"
-            "        window._toast&&window._toast('Saved','success');"
-            "      }else{"
-            "        stat.textContent=d.error;stat.className='chart-status error';"
-            "      }"
-            "    });"
-            "  };"
-            "  function validate(c,e){"
-            "    if(e==='.json'){"
-            "      try{JSON.parse(c)}catch(x){return 'Invalid JSON: '+x.message}"
-            "    }"
-            "    return null;"
-            "  }"
-            "})();"
-            "</script>"
-        )
-
-        html = _render_page(
-            f"Edit — {filename}",
-            page_content,
-            header_html=_render_header(show_upload=False),
-            extra_scripts=editor_script,
-        )
-
-        encoded = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
 
     # ── File Serving Overrides ───────────────────────────────────
 
@@ -1311,11 +1219,11 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             size /= 1024.0
         return f"{size:.1f} PB"
 
-    def log_message(self, format, *args):
-        log.info(format, *args, extra={"client": self.client_address[0]})
+    def log_message(self, fmt, *args):
+        log.info(fmt, *args, extra={"client": self.client_address[0]})
 
-    def log_error(self, format, *args):
-        log.warning(format, *args, extra={"client": self.client_address[0]})
+    def log_error(self, fmt, *args):
+        log.warning(fmt, *args, extra={"client": self.client_address[0]})
 
 
 # ── Entry Point ────────────────────────────────────────────────────────
@@ -1338,7 +1246,10 @@ def run_server(directory, port):
             log.info("  Caffrey's File Server")
             log.info("=" * 60)
             log.info("  Directory : %s", directory)
-            log.info("  Password  : %s (env: CFS_PASSWORD)", "*" * len(DELETE_PASSWORD))
+            log.info(
+                "  Password  : %s (env: CFS_PASSWORD)",
+                "*" * len(DELETE_PASSWORD),
+            )
             log.info("  Local     : http://localhost:%d", port)
             log.info("  Network   : http://%s:%d", LOCAL_IP, port)
             log.info("  Hostname  : http://%s:%d", HOSTNAME, port)
@@ -1356,7 +1267,6 @@ def run_server(directory, port):
 
 def main():
     import argparse
-
     from log_setup import configure_logging
 
     configure_logging()
@@ -1364,8 +1274,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Caffrey's File Server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Environment variables: CFS_PORT, CFS_DIRECTORY, CFS_PASSWORD, "
-        "CFS_LOG_DIR, CFS_LOG_LEVEL, CFS_ARTIFACTORY_URL, CFS_ARTIFACTORY_KEY",
+        epilog=(
+            "Environment variables: CFS_PORT, CFS_DIRECTORY, CFS_PASSWORD, "
+            "CFS_LOG_DIR, CFS_LOG_LEVEL, CFS_ARTIFACTORY_URL, "
+            "CFS_ARTIFACTORY_KEY"
+        ),
     )
     parser.add_argument(
         "-d",
@@ -1375,7 +1288,11 @@ def main():
         help=f"Directory to serve (default: {DIRECTORY})",
     )
     parser.add_argument(
-        "-p", "--port", type=int, default=PORT, help=f"Port (default: {PORT})"
+        "-p",
+        "--port",
+        type=int,
+        default=PORT,
+        help=f"Port (default: {PORT})",
     )
     args = parser.parse_args()
 

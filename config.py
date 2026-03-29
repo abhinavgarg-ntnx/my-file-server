@@ -74,4 +74,8 @@ EXT_LANG_MAP = {
     ".sql": "sql", ".go": "go", ".java": "java",
     ".c": "c", ".cpp": "cpp", ".rs": "rust", ".rb": "ruby",
     ".php": "php", ".md": "markdown", ".toml": "toml",
+    ".ini": "ini", ".cfg": "ini", ".conf": "ini",
+    ".properties": "properties",
 }
+
+SYSTEM_DIRS = {"charts", "helm-charts"}

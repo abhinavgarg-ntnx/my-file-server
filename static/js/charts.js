@@ -69,7 +69,7 @@
         });
         renderCharts(_allCharts);
       })
-      .catch(function (err) {
+      .catch(function () {
         document.getElementById("cm-body").innerHTML =
           '<tr><td colspan="5" class="cm-loading cm-err">' +
           "Failed to load charts</td></tr>";
@@ -134,8 +134,7 @@
         "')\">" +
         SVG_LIST +
         "</button>" +
-        "</td>" +
-        "</tr>";
+        "</td></tr>";
     });
     body.innerHTML = html;
   }
@@ -165,13 +164,16 @@
 
   window.cmToggleUpload = function () {
     var section = document.getElementById("cm-upload-section");
-    if (section) {
-      section.classList.toggle("open");
-      if (section.classList.contains("open")) {
-        setTimeout(function () {
+    if (!section) return;
+    var wasOpen = section.classList.contains("open");
+    section.classList.toggle("open");
+    if (!wasOpen) {
+      setTimeout(function () {
+        var rect = section.getBoundingClientRect();
+        if (rect.top < 0 || rect.bottom > window.innerHeight) {
           section.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }, 50);
-      }
+        }
+      }, 60);
     }
   };
 
@@ -190,6 +192,11 @@
   window.cmCloseImport = function () {
     var m = document.getElementById("import-modal");
     if (m) m.classList.remove("open");
+    var stat = document.getElementById("chart-status");
+    if (stat) {
+      stat.textContent = "";
+      stat.className = "chart-status";
+    }
   };
 
   /* ── Upload chart ─────────────────────────────────────────────── */
@@ -255,20 +262,30 @@
   /* ── Download chart ───────────────────────────────────────────── */
 
   window.cmDownload = function (name, version) {
-    var url =
-      "/__api__/cm/charts/" +
+    var metaUrl =
+      API +
+      "/api/charts/" +
       encodeURIComponent(name) +
       "/" +
       encodeURIComponent(version);
-    fetch(url)
+    fetch(metaUrl)
       .then(function (r) {
         return r.json();
       })
       .then(function (d) {
         if (d && d.urls && d.urls.length) {
-          window.open(d.urls[0], "_blank");
+          var dlUrl = d.urls[0];
+          if (dlUrl.indexOf("://") === -1) {
+            dlUrl = API + "/" + dlUrl;
+          }
+          window.open(dlUrl, "_blank");
         } else {
-          window._toast && window._toast("No download URL found", "error");
+          window.open(
+            API +
+              "/charts/" +
+              encodeURIComponent(name + "-" + version + ".tgz"),
+            "_blank",
+          );
         }
       })
       .catch(function () {
@@ -276,10 +293,29 @@
       });
   };
 
-  /* ── Delete chart ─────────────────────────────────────────────── */
+  /* ── Delete chart (with confirmation modal) ──────────────────── */
+
+  var _cmDelName = "";
+  var _cmDelVersion = "";
 
   window.cmDelete = function (name, version) {
-    if (!confirm("Delete " + name + " v" + version + "?")) return;
+    _cmDelName = name;
+    _cmDelVersion = version;
+    var m = document.getElementById("cm-delete-modal");
+    var label = document.getElementById("cm-delete-label");
+    if (label) label.textContent = name + " v" + version;
+    if (m) m.classList.add("open");
+  };
+
+  window.cmCloseDelete = function () {
+    var m = document.getElementById("cm-delete-modal");
+    if (m) m.classList.remove("open");
+  };
+
+  window.cmConfirmDelete = function () {
+    var name = _cmDelName;
+    var version = _cmDelVersion;
+    window.cmCloseDelete();
     fetch(
       API +
         "/api/charts/" +
@@ -346,6 +382,14 @@
             esc(v.description || "") +
             "</td>" +
             '<td class="cm-actions">' +
+            '<button class="act-btn dl-btn" title="Download"' +
+            " onclick=\"cmDownload('" +
+            escAttr(v.name) +
+            "','" +
+            escAttr(v.version) +
+            "')\">" +
+            SVG_DL +
+            "</button>" +
             '<button class="act-btn del-btn" title="Delete this version"' +
             " onclick=\"cmDelete('" +
             escAttr(v.name) +
@@ -427,7 +471,10 @@
   window._cmRefresh = loadCharts;
 
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") window.cmCloseImport && window.cmCloseImport();
+    if (e.key === "Escape") {
+      window.cmCloseImport && window.cmCloseImport();
+      window.cmCloseDelete && window.cmCloseDelete();
+    }
   });
 
   /* ── Init ─────────────────────────────────────────────────────── */

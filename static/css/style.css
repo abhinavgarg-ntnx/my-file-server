@@ -281,42 +281,40 @@ a:hover {
     transition: width 0.3s;
     width: 0;
 }
-/* ── File list ─────────────────────────────────────────────────── */
+/* ── File list (table layout) ─────────────────────────────────── */
 .file-list-wrap {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 6px 0;
     box-shadow: var(--shadow-sm);
+    overflow: hidden;
 }
-.file-list {
-    list-style: none;
+.file-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.file-item td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: middle;
+}
+.file-item:last-child td {
+    border-bottom: none;
 }
 .file-item {
-    display: flex;
-    align-items: center;
-    padding: 9px 18px;
-    margin: 0 6px;
-    border-radius: 8px;
-    border-bottom: 1px solid var(--border-subtle);
-    transition: all var(--transition);
-    position: relative;
-    background: transparent;
-}
-.file-item:last-child {
-    border-bottom: none;
+    transition: background var(--transition);
 }
 .file-item:hover {
     background: var(--bg-hover);
-    transform: translateX(3px);
 }
-.file-item a.file-link {
+.ft-name {
+    width: 99%;
+}
+.ft-name .file-link {
     display: flex;
     align-items: center;
-    flex: 1;
     text-decoration: none;
     color: var(--text-primary);
-    min-width: 0;
 }
 .fi-svg {
     width: 22px;
@@ -325,35 +323,26 @@ a:hover {
     margin-right: 14px;
 }
 .file-name {
-    flex: 1;
     font-weight: 500;
     font-size: 14px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.file-meta {
-    display: flex;
-    align-items: center;
-    gap: 20px;
+.ft-size, .ft-date {
+    white-space: nowrap;
+    text-align: right;
     color: var(--text-muted);
     font-size: 13px;
-    flex-shrink: 0;
-    margin-left: 12px;
+    padding-left: 20px !important;
 }
-.file-meta span {
-    min-width: 80px;
-    text-align: right;
+.ft-actions {
+    white-space: nowrap;
+    padding-left: 8px !important;
 }
 .file-actions {
     display: flex;
     gap: 4px;
-    opacity: 0;
-    transition: opacity var(--transition);
-    margin-left: 8px;
-}
-.file-item:hover .file-actions {
-    opacity: 1;
 }
 .act-btn {
     padding: 5px;
@@ -375,6 +364,10 @@ a:hover {
 .act-btn.dl-btn:hover {
     color: var(--success);
 }
+.act-btn.ren-btn:hover {
+    color: var(--warning);
+    background: rgba(245,158,11,0.1);
+}
 .act-btn.del-btn:hover {
     color: var(--danger);
     background: var(--danger-subtle);
@@ -382,6 +375,19 @@ a:hover {
 .act-btn svg {
     width: 16px;
     height: 16px;
+}
+.sys-tag {
+    display: inline-block;
+    background: var(--accent-subtle);
+    color: var(--accent);
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 8px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
 }
 .empty-state {
     text-align: center;
@@ -419,6 +425,25 @@ a:hover {
     width: 420px;
     max-width: 90vw;
     box-shadow: var(--shadow);
+    position: relative;
+}
+.modal-close {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 22px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+    border-radius: 6px;
+    transition: all var(--transition);
+}
+.modal-close:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
 }
 .modal h3 {
     font-size: 16px;
@@ -448,6 +473,11 @@ a:hover {
     gap: 10px;
     margin-top: 18px;
     justify-content: flex-end;
+    flex-wrap: nowrap;
+}
+.modal-btns button, .modal-btns .hdr-btn {
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .modal-btn {
     padding: 8px 20px;
@@ -521,13 +551,14 @@ a:hover {
 .viewer-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
+    gap: 16px;
+    margin-bottom: 20px;
     flex-wrap: wrap;
 }
 .viewer-header .file-info {
     font-size: 13px;
     color: var(--text-muted);
+    margin-top: 4px;
 }
 .viewer-wrap {
     background: var(--bg-code);
@@ -536,36 +567,95 @@ a:hover {
     overflow: auto;
     max-height: calc(100vh - 200px);
 }
-.viewer-content {
-    display: table;
-    width: 100%;
+/* ── Prism overrides ──────────────────────────────────────────── */
+.viewer-wrap pre[class*="language-"] {
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 12px 16px 12px 4em !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
     font-size: 13px;
     line-height: 1.7;
+}
+.viewer-wrap code[class*="language-"] {
     font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: transparent !important;
 }
-.viewer-line {
-    display: table-row;
+.viewer-wrap .line-numbers .line-numbers-rows {
+    border-right-color: var(--border-subtle) !important;
 }
-.viewer-line:hover {
-    background: var(--accent-subtle);
-}
-.viewer-ln {
-    display: table-cell;
-    padding: 0 16px 0 12px;
-    text-align: right;
-    user-select: none;
-    color: var(--text-muted);
+.viewer-wrap .line-numbers-rows > span::before {
+    color: var(--text-muted) !important;
     opacity: 0.5;
-    white-space: nowrap;
-    vertical-align: top;
-    border-right: 1px solid var(--border-subtle);
-    min-width: 52px;
 }
-.viewer-code {
-    display: table-cell;
-    padding: 0 16px;
-    white-space: pre-wrap;
-    word-break: break-all;
+/* Dark-mode Prism tokens (VS Code Dark+ inspired) */
+.token.comment, .token.prolog, .token.doctype, .token.cdata {
+    color: #6a9955;
+}
+.token.punctuation {
+    color: #d4d4d4;
+}
+.token.property, .token.constant, .token.symbol, .token.deleted {
+    color: #9cdcfe;
+}
+.token.tag {
+    color: #569cd6;
+}
+.token.boolean, .token.number {
+    color: #b5cea8;
+}
+.token.selector, .token.attr-name, .token.string, .token.char, .token.builtin, .token.inserted {
+    color: #ce9178;
+}
+.token.operator, .token.entity, .token.url {
+    color: #d4d4d4;
+}
+.token.atrule, .token.attr-value, .token.keyword {
+    color: #c586c0;
+}
+.token.function, .token.class-name {
+    color: #dcdcaa;
+}
+.token.regex, .token.important, .token.variable {
+    color: #d16969;
+}
+/* Light-mode Prism tokens (VS Code Light+ inspired) */
+html.light .token.comment, html.light .token.prolog, html.light .token.doctype, html.light .token.cdata {
+    color: #008000;
+}
+html.light .token.punctuation {
+    color: #393a34;
+}
+html.light .token.property, html.light .token.constant, html.light .token.symbol, html.light .token.deleted {
+    color: #001080;
+}
+html.light .token.tag {
+    color: #800000;
+}
+html.light .token.boolean, html.light .token.number {
+    color: #098658;
+}
+html.light .token.selector, html.light .token.attr-name, html.light .token.string, html.light .token.char, html.light .token.builtin, html.light .token.inserted {
+    color: #a31515;
+}
+html.light .token.operator, html.light .token.entity, html.light .token.url {
+    color: #393a34;
+}
+html.light .token.atrule, html.light .token.attr-value, html.light .token.keyword {
+    color: #0000ff;
+}
+html.light .token.function, html.light .token.class-name {
+    color: #795e26;
+}
+html.light .token.regex, html.light .token.important, html.light .token.variable {
+    color: #ee0000;
+}
+html.light .viewer-wrap code[class*="language-"] {
+    color: #393a34;
 }
 /* ── Charts / Forms ───────────────────────────────────────────── */
 .chart-form {
@@ -647,6 +737,8 @@ a:hover {
     display: flex;
     align-items: center;
     gap: 14px;
+    min-width: 0;
+    flex: 1;
 }
 .cm-back-btn {
     display: flex;
@@ -679,6 +771,13 @@ a:hover {
     font-size: 12px;
     color: var(--text-muted);
     margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cm-ver {
+    font-weight: 500;
+    opacity: 0.7;
 }
 .cm-repo-cmd {
     text-align: right;
@@ -705,11 +804,14 @@ a:hover {
 .cm-cmd-row code {
     padding: 8px 14px;
     font-size: 12px;
-    color: var(--accent);
+    color: #93c5fd;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     white-space: nowrap;
     background: none;
     border: none;
+}
+html.light .cm-cmd-row code {
+    color: #2563eb;
 }
 .cm-copy-btn {
     padding: 8px 12px;
@@ -750,8 +852,12 @@ a:hover {
     animation: pulse 2s infinite;
 }
 @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    0%, 100% {
+        opacity: 1;
+   }
+    50% {
+        opacity: 0.4;
+   }
 }
 .cm-dot.up {
     background: var(--success);
@@ -945,6 +1051,49 @@ a:hover {
     gap: 8px;
     margin-bottom: 14px;
 }
+/* ── Sort bar ─────────────────────────────────────────────────── */
+.sort-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+.sort-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin-right: 2px;
+}
+.sort-btn {
+    padding: 4px 12px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    transition: all var(--transition);
+}
+.sort-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+.sort-btn.active {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    border-color: var(--accent);
+    font-weight: 600;
+}
+.sort-spacer {
+    flex: 1;
+}
+.hdr-btn.sm {
+    padding: 4px 12px;
+    font-size: 12px;
+}
 /* ── Editor ────────────────────────────────────────────────────── */
 .editor-topbar {
     background: var(--bg-card);
@@ -994,11 +1143,8 @@ a:hover {
     .container {
         padding: 14px;
    }
-    .file-meta {
+    .ft-size, .ft-date {
         display: none;
-   }
-    .file-actions {
-        opacity: 1;
    }
     .form-row {
         flex-direction: column;

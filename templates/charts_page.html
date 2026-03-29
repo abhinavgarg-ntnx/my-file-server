@@ -1,0 +1,59 @@
+<div class="cm-topbar">
+  <div class="cm-topbar-left">
+    <a href="/" class="cm-back-btn" title="Back to Files">{{SVG_BACK}}</a>
+    <div>
+      <h2 class="cm-title">Helm Chart Repository</h2>
+      <p class="cm-subtitle">Powered by ChartMuseum <span class="cm-ver">{{CM_VERSION}}</span></p>
+    </div>
+  </div>
+  <div class="cm-repo-cmd">
+    <label>Add this repo</label>
+    <div class="cm-cmd-row">
+      <code id="repo-cmd">helm repo add caffrey {{REPO_URL}}</code>
+      <button class="cm-copy-btn" onclick="copyRepoCmd()" title="Copy">{{SVG_COPY}}</button>
+    </div>
+  </div>
+</div>
+<div class="cm-controls">
+  <div class="cm-health" id="cm-health">
+    <span class="cm-dot" id="cm-dot"></span>
+    <span id="cm-health-text">Checking...</span>
+  </div>
+  <div class="cm-toolbar">
+    <input type="search" id="cm-search" placeholder="Search charts..." autocomplete="off">
+    <span class="cm-count" id="cm-count"></span>
+    <button class="hdr-btn" onclick="cmToggleUpload()">{{SVG_UPLOAD_CLOUD_SM}} Upload</button>
+    <button class="hdr-btn" onclick="cmShowImport()">{{SVG_DOWNLOAD}} Import</button>
+  </div>
+</div>
+<div id="cm-upload-section" class="upload-section">
+  <div class="cm-upload-zone" id="cm-upload-zone">
+    <div class="cm-upload-icon">{{SVG_CM_UPLOAD}}</div>
+    <p>Drop <code>.tgz</code> chart here or browse</p>
+    <input type="file" id="cm-upload-input" accept=".tgz,.gz">
+  </div>
+  <div id="cm-upload-status" class="chart-status"></div>
+</div>
+<div class="cm-card">
+  <table class="cm-table">
+    <thead><tr>
+      <th>Chart</th><th>Latest</th>
+      <th>App Version</th><th>Description</th>
+      <th></th>
+    </tr></thead>
+    <tbody id="cm-body">
+      <tr><td colspan="5" class="cm-loading">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+<div id="cm-delete-modal" class="modal-overlay" onclick="if(event.target===this)cmCloseDelete()">
+  <div class="modal">
+    <button class="modal-close" onclick="cmCloseDelete()">&times;</button>
+    <h3>Delete Chart</h3>
+    <p>Are you sure you want to delete <strong id="cm-delete-label"></strong> from ChartMuseum?</p>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="cmCloseDelete()">Cancel</button>
+      <button class="modal-btn danger" onclick="cmConfirmDelete()">Delete</button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,15 @@
+<div class="editor-topbar">
+  <a href="{{BACK_URL}}" class="cm-back-btn" title="Back">{{SVG_BACK}}</a>
+  <div>
+    <h2 class="cm-title">{{FILENAME}}</h2>
+    <p class="cm-subtitle">{{LANG_LABEL}} &middot; {{FILE_PATH}}</p>
+  </div>
+  <div class="editor-actions">
+    <span id="editor-status" class="chart-status"></span>
+    <button class="hdr-btn accent" onclick="saveFile()">Save</button>
+  </div>
+</div>
+<div class="editor-wrap">
+  <textarea id="editor-content" class="editor-textarea"
+    spellcheck="false" data-path="{{FILE_PATH}}" data-ext="{{FILE_EXT}}"></textarea>
+</div>

@@ -1,0 +1,12 @@
+<div class="viewer-header">
+  <a href="{{PARENT_URL}}" class="hdr-btn">{{SVG_BACK}} Back</a>
+  <div style="flex:1;margin-left:8px">
+    <div style="font-weight:600;font-size:16px">{{FILENAME}}</div>
+    <div class="file-info" style="margin-top:4px">{{SIZE}} &middot; Modified {{MTIME}}</div>
+  </div>
+  <a href="{{FILE_PATH}}" class="hdr-btn" download>{{SVG_DOWNLOAD}} Download</a>
+</div>
+<div class="viewer-wrap">
+  <pre class="line-numbers"><code class="language-{{LANG}}">{{CODE_CONTENT}}</code></pre>
+  {{TRUNCATED_MSG}}
+</div>

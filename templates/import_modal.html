@@ -1,0 +1,22 @@
+<div id="import-modal" class="modal-overlay" onclick="if(event.target===this)cmCloseImport()">
+  <div class="modal">
+    <button class="modal-close" onclick="cmCloseImport()">&times;</button>
+    <h3>Import from Artifactory</h3>
+    <p>Download a Helm chart .tgz and optionally push it to ChartMuseum.</p>
+    {{REQUESTS_NOTE}}
+    <div class="form-group" style="margin-bottom:10px">
+      <label>Chart Name</label>
+      <input type="text" id="chart-name" placeholder="e.g. ncm-base">
+    </div>
+    <div class="form-group" style="margin-bottom:14px">
+      <label>Version</label>
+      <input type="text" id="chart-version" placeholder="e.g. 2.0.11">
+    </div>
+    <div id="chart-status" class="chart-status"></div>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="cmCloseImport()">Cancel</button>
+      <button class="modal-btn cancel" onclick="downloadChart(false)">Download Only</button>
+      <button class="hdr-btn accent" onclick="downloadChart(true)">{{SVG_DOWNLOAD}} Import &amp; Push</button>
+    </div>
+  </div>
+</div>

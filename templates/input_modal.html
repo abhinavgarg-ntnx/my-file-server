@@ -1,0 +1,12 @@
+<div id="input-modal" class="modal-overlay" onclick="if(event.target===this)closeInputModal()">
+  <div class="modal">
+    <h3 id="input-modal-title">New Item</h3>
+    <p id="input-modal-desc"></p>
+    <input type="text" id="input-modal-value" placeholder="">
+    <div id="input-modal-error" class="chart-status error" style="display:none"></div>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="closeInputModal()">Cancel</button>
+      <button class="hdr-btn accent" id="input-modal-ok">Create</button>
+    </div>
+  </div>
+</div>

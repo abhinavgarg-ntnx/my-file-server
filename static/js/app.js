@@ -63,13 +63,16 @@
 
   window.toggleUpload = function () {
     var section = document.getElementById("upload-section");
-    if (section) {
-      section.classList.toggle("open");
-      if (section.classList.contains("open")) {
-        setTimeout(function () {
-          section.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 50);
-      }
+    if (!section) return;
+    var wasOpen = section.classList.contains("open");
+    section.classList.toggle("open");
+    if (!wasOpen) {
+      setTimeout(function () {
+        var rect = section.getBoundingClientRect();
+        if (rect.top < 0 || rect.bottom > window.innerHeight) {
+          section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      }, 60);
     }
   };
 
@@ -136,7 +139,7 @@
 
   setTimeout(setupUpload, 0);
 
-  /* ── Delete ──────────────────────────────────────────────────── */
+  /* ── Delete Modal ──────────────────────────────────────────────  */
 
   var _deletePath = "";
 
@@ -190,6 +193,205 @@
       });
   };
 
+  /* ── Input Modal (New Folder / New File) ───────────────────── */
+
+  var _inputCallback = null;
+
+  function openInputModal(
+    title,
+    desc,
+    placeholder,
+    btnLabel,
+    cb,
+    defaultValue,
+  ) {
+    var m = document.getElementById("input-modal");
+    if (!m) return cb(null);
+    document.getElementById("input-modal-title").textContent = title;
+    document.getElementById("input-modal-desc").textContent = desc;
+    var inp = document.getElementById("input-modal-value");
+    inp.value = defaultValue || "";
+    inp.placeholder = placeholder;
+    var errEl = document.getElementById("input-modal-error");
+    errEl.style.display = "none";
+    var btn = document.getElementById("input-modal-ok");
+    btn.textContent = btnLabel;
+    _inputCallback = cb;
+    btn.onclick = function () {
+      var val = inp.value.trim();
+      if (!val) {
+        errEl.textContent = "Name is required";
+        errEl.style.display = "block";
+        return;
+      }
+      if (/[\/\\]/.test(val)) {
+        errEl.textContent = "Name cannot contain slashes";
+        errEl.style.display = "block";
+        return;
+      }
+      window.closeInputModal();
+      cb(val);
+    };
+    m.classList.add("open");
+    setTimeout(function () {
+      inp.focus();
+    }, 100);
+  }
+
+  window.closeInputModal = function () {
+    var m = document.getElementById("input-modal");
+    if (m) m.classList.remove("open");
+    _inputCallback = null;
+  };
+
+  window.showNewFolderModal = function (dir) {
+    openInputModal(
+      "New Folder",
+      "Create a folder in " + dir,
+      "folder-name",
+      "Create",
+      function (name) {
+        if (!name) return;
+        var path = (dir === "/" ? "/" : dir) + name;
+        fetch("/__api__/mkdir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: path }),
+        })
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (d) {
+            if (d.success) {
+              toast("Folder created", "success");
+              setTimeout(function () {
+                location.reload();
+              }, 400);
+            } else {
+              toast(d.error || "Failed", "error");
+            }
+          })
+          .catch(function () {
+            toast("Network error", "error");
+          });
+      },
+    );
+  };
+
+  window.showNewFileModal = function (dir) {
+    openInputModal(
+      "New File",
+      "Create a file in " + dir,
+      "config.yaml",
+      "Create",
+      function (name) {
+        if (!name) return;
+        var path = (dir === "/" ? "/" : dir) + name;
+        fetch("/__api__/newfile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: path, content: "" }),
+        })
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (d) {
+            if (d.success) {
+              toast("File created", "success");
+              location.href = "/__editor__?file=" + encodeURIComponent(path);
+            } else {
+              toast(d.error || "Failed", "error");
+            }
+          })
+          .catch(function () {
+            toast("Network error", "error");
+          });
+      },
+    );
+  };
+
+  /* ── Rename Modal ────────────────────────────────────────────── */
+
+  window.showRenameModal = function (path, currentName) {
+    openInputModal(
+      "Rename",
+      "Enter new name for " + currentName,
+      currentName,
+      "Rename",
+      function (newName) {
+        if (!newName || newName === currentName) return;
+        fetch("/__api__/rename", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: path, newName: newName }),
+        })
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (d) {
+            if (d.success) {
+              toast("Renamed successfully", "success");
+              setTimeout(function () {
+                location.reload();
+              }, 400);
+            } else {
+              toast(d.error || "Rename failed", "error");
+            }
+          })
+          .catch(function () {
+            toast("Network error", "error");
+          });
+      },
+      currentName,
+    );
+  };
+
+  /* ── Sort ───────────────────────────────────────────────────── */
+
+  window.sortFiles = function (key, btn) {
+    var list = document.querySelector(".file-list");
+    if (!list) return;
+    var items = Array.from(list.querySelectorAll(".file-item[data-name]"));
+    if (!items.length) return;
+
+    var asc = true;
+    if (btn && btn.classList.contains("active") && btn.dataset.dir === "asc") {
+      asc = false;
+    }
+
+    items.sort(function (a, b) {
+      var aDir = a.dataset.isdir === "1";
+      var bDir = b.dataset.isdir === "1";
+      if (aDir !== bDir) return aDir ? -1 : 1;
+
+      var cmp = 0;
+      if (key === "name") cmp = a.dataset.name.localeCompare(b.dataset.name);
+      else if (key === "size")
+        cmp = (parseInt(a.dataset.size) || 0) - (parseInt(b.dataset.size) || 0);
+      else if (key === "date")
+        cmp =
+          (parseInt(a.dataset.mtime) || 0) - (parseInt(b.dataset.mtime) || 0);
+      return asc ? cmp : -cmp;
+    });
+
+    items.forEach(function (item) {
+      list.appendChild(item);
+    });
+
+    document.querySelectorAll(".sort-btn").forEach(function (b) {
+      b.classList.remove("active");
+      b.dataset.dir = "";
+    });
+    if (btn) {
+      btn.classList.add("active");
+      btn.dataset.dir = asc ? "asc" : "desc";
+      btn.textContent =
+        btn.dataset.sort.charAt(0).toUpperCase() +
+        btn.dataset.sort.slice(1) +
+        (asc ? " ↑" : " ↓");
+    }
+  };
+
   /* ── Chart Download ──────────────────────────────────────────── */
 
   window.downloadChart = function (push) {
@@ -222,11 +424,9 @@
       .then(function (d) {
         if (d.success) {
           var msg =
-            "Downloaded to " +
-            '<a href="' +
+            'Downloaded to <a href="' +
             d.path +
-            '" style="color:inherit;' +
-            'text-decoration:underline">' +
+            '" style="color:inherit;text-decoration:underline">' +
             d.path +
             "</a>";
           if (d.chartmuseum) {
@@ -240,6 +440,11 @@
             stat.innerHTML = msg;
             stat.className = "chart-status success";
           }
+          setTimeout(function () {
+            window.cmCloseImport && window.cmCloseImport();
+            nameEl.value = "";
+            verEl.value = "";
+          }, 2000);
         } else {
           if (stat) {
             stat.textContent = "Error: " + d.error;
@@ -254,60 +459,6 @@
           stat.className = "chart-status error";
         }
       });
-  };
-
-  /* ── New Folder / New File ───────────────────────────────────── */
-
-  window.promptNewFolder = function (dir) {
-    var name = prompt("New folder name:");
-    if (!name || !name.trim()) return;
-    name = name.trim();
-    if (/[\/\\]/.test(name)) {
-      toast("Folder name cannot contain slashes", "error");
-      return;
-    }
-    var path = (dir === "/" ? "/" : dir) + name;
-    fetch("/__api__/mkdir", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: path }),
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (d.success) {
-          toast("Folder created", "success");
-          setTimeout(function () { location.reload(); }, 400);
-        } else {
-          toast(d.error || "Failed", "error");
-        }
-      })
-      .catch(function () { toast("Network error", "error"); });
-  };
-
-  window.promptNewFile = function (dir) {
-    var name = prompt("New file name (e.g. config.yaml):");
-    if (!name || !name.trim()) return;
-    name = name.trim();
-    if (/[\/\\]/.test(name)) {
-      toast("File name cannot contain slashes", "error");
-      return;
-    }
-    var path = (dir === "/" ? "/" : dir) + name;
-    fetch("/__api__/newfile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: path, content: "" }),
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (d.success) {
-          toast("File created", "success");
-          location.href = "/__editor__?file=" + encodeURIComponent(path);
-        } else {
-          toast(d.error || "Failed", "error");
-        }
-      })
-      .catch(function () { toast("Network error", "error"); });
   };
 
   /* ── JSON Viewer Enhancement ─────────────────────────────────── */
@@ -360,10 +511,16 @@
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
       window.closeDeleteModal && window.closeDeleteModal();
+      window.closeInputModal && window.closeInputModal();
     }
-    var modal = document.getElementById("delete-modal");
-    if (e.key === "Enter" && modal && modal.classList.contains("open")) {
+    var delModal = document.getElementById("delete-modal");
+    if (e.key === "Enter" && delModal && delModal.classList.contains("open")) {
       window.confirmDelete && window.confirmDelete();
+    }
+    var inpModal = document.getElementById("input-modal");
+    if (e.key === "Enter" && inpModal && inpModal.classList.contains("open")) {
+      var btn = document.getElementById("input-modal-ok");
+      if (btn) btn.click();
     }
   });
 })();
