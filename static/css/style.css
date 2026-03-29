@@ -144,6 +144,10 @@ a:hover {
     color: var(--text-primary);
     border-color: var(--accent);
 }
+.hdr-btn.icon-only {
+    padding: 7px 9px;
+    gap: 0;
+}
 /* ── Filer dropdown ──────────────────────────────────────────── */
 .filer-dropdown { position: relative; }
 .filer-menu {
@@ -205,7 +209,7 @@ a:hover {
 }
 /* ── Container ─────────────────────────────────────────────────── */
 .container {
-    max-width: 1100px;
+    max-width: 1400px;
     margin: 0 auto;
     padding: 20px 24px 40px;
 }
@@ -366,10 +370,13 @@ a:hover {
 .ft-actions {
     white-space: nowrap;
     padding-left: 8px !important;
+    width: 1%;
 }
 .file-actions {
     display: flex;
     gap: 4px;
+    justify-content: flex-end;
+    min-width: 176px;
 }
 .act-btn {
     padding: 5px;
@@ -394,6 +401,9 @@ a:hover {
 .act-btn.ren-btn:hover {
     color: var(--warning);
     background: rgba(245,158,11,0.1);
+}
+.act-btn.copy-btn:hover {
+    color: var(--accent);
 }
 .act-btn.del-btn:hover {
     color: var(--danger);
@@ -1121,6 +1131,13 @@ html.light .cm-cmd-row code {
     padding: 4px 12px;
     font-size: 12px;
 }
+.hdr-btn.sm.icon-only {
+    padding: 5px 7px;
+}
+.hdr-btn.sm.icon-only svg {
+    width: 15px;
+    height: 15px;
+}
 /* ── Editor ────────────────────────────────────────────────────── */
 .editor-topbar {
     background: var(--bg-card);
@@ -1307,6 +1324,9 @@ html.light .cm-cmd-row code {
    }
     .ft-size, .ft-date {
         display: none;
+   }
+    .file-actions {
+        min-width: auto;
    }
     .form-row {
         flex-direction: column;

@@ -144,3 +144,37 @@ SVG_FILERS = (
     "a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2"
     'v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>'
 )
+
+SVG_FOLDER_PLUS = (
+    '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">'
+    '<path stroke-linecap="round" stroke-linejoin="round"'
+    ' d="M12 10.5v6m3-3H9m4.06-7.19l-2.12-2.12a1.5 1.5 0 00-1.061-.44'
+    "H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25"
+    ' 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>'
+)
+
+SVG_FILE_PLUS = (
+    '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">'
+    '<path stroke-linecap="round" stroke-linejoin="round"'
+    ' d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125'
+    " 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25"
+    "m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25"
+    "c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504"
+    ' 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>'
+)
+
+SVG_HELM = (
+    '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">'
+    '<path stroke-linecap="round" stroke-linejoin="round"'
+    ' d="M10.5 6a7.5 7.5 0 107.5 7.5h-7.5V6z"/>'
+    '<path stroke-linecap="round" stroke-linejoin="round"'
+    ' d="M13.5 10.5H21A7.5 7.5 0 0013.5 3v7.5z"/></svg>'
+)
+
+SVG_LINK = (
+    '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">'
+    '<path stroke-linecap="round" stroke-linejoin="round"'
+    ' d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5'
+    " 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5"
+    ' 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"/></svg>'
+)

@@ -67,6 +67,10 @@ from svgs import (
     SVG_UPLOAD_BTN,
     SVG_CM_UPLOAD,
     SVG_FILERS,
+    SVG_FOLDER_PLUS,
+    SVG_FILE_PLUS,
+    SVG_HELM,
+    SVG_LINK,
 )
 from charts import download_and_extract_chart, HAS_REQUESTS
 
@@ -153,11 +157,32 @@ def _cleanup_old_jobs():
     with _zip_lock:
         for jid in list(_zip_jobs):
             job = _zip_jobs[jid]
-            age = now - job.get("finished_at", now)
-            if job["status"] in ("done", "error", "cancelled") and age > 600:
-                if job.get("zip_path"):
-                    _safe_unlink(job["zip_path"])
-                del _zip_jobs[jid]
+            status = job["status"]
+            if status in ("done", "error", "cancelled"):
+                age = now - job.get("finished_at", now)
+                if age > 600:
+                    if job.get("zip_path"):
+                        _safe_unlink(job["zip_path"])
+                    del _zip_jobs[jid]
+            elif status in ("scanning", "zipping"):
+                started = now - job.get("started_at", now)
+                if started > 1800:
+                    job["cancel_event"].set()
+                    if job.get("zip_path"):
+                        _safe_unlink(job["zip_path"])
+                    del _zip_jobs[jid]
+
+
+def _periodic_cleanup():
+    while True:
+        time.sleep(300)
+        try:
+            _cleanup_old_jobs()
+        except Exception:
+            pass
+
+
+threading.Thread(target=_periodic_cleanup, daemon=True).start()
 
 
 def _zip_worker(job_id, local_path, cancel_event):
@@ -235,8 +260,8 @@ def _zip_worker(job_id, local_path, cancel_event):
 
 
 _CHARTS_BTN_HTML = (
-    '<a href="/__charts__" class="hdr-btn" title="ChartMuseum">'
-    f"{SVG_DOWNLOAD} ChartMuseum</a>"
+    '<a href="/__charts__" class="hdr-btn icon-only" title="ChartMuseum">'
+    f"{SVG_HELM}</a>"
 )
 
 _FILERS_DROPDOWN = ""
@@ -248,25 +273,18 @@ if REMOTE_FILERS:
     )
     _FILERS_DROPDOWN = (
         '<div class="filer-dropdown">'
-        '<button class="hdr-btn" onclick="toggleFilerMenu(event)">'
-        f"{SVG_FILERS} Filers</button>"
+        '<button class="hdr-btn icon-only" onclick="toggleFilerMenu(event)"'
+        f' title="Remote Filers">{SVG_FILERS}</button>'
         f'<div class="filer-menu" id="filer-menu">{_items}</div>'
         "</div>"
     )
 
 
-def _render_header(show_upload=True, show_charts=True):
+def _render_header(show_charts=True):
     """Render the header partial."""
-    upload_btn = ""
-    if show_upload:
-        upload_btn = (
-            '<button class="hdr-btn" onclick="toggleUpload()">'
-            f"{SVG_UPLOAD_BTN} Upload</button>"
-        )
     charts_btn = _CHARTS_BTN_HTML if show_charts else ""
     return render_template(
         "header.html",
-        UPLOAD_BUTTON=upload_btn,
         CHARTS_BUTTON=charts_btn,
         FILERS_BUTTON=_FILERS_DROPDOWN,
     )
@@ -294,8 +312,8 @@ def _render_page(
 _APACHE_ROW_RE = re.compile(
     r'alt="\[([^\]]*)\]".*?'
     r'<a\s+href="([^"]+)"[^>]*>([^<]+)</a>\s*'
-    r'</td>\s*<td[^>]*>\s*(.*?)\s*</td>\s*'
-    r'<td[^>]*>\s*(.*?)\s*</td>',
+    r"</td>\s*<td[^>]*>\s*(.*?)\s*</td>\s*"
+    r"<td[^>]*>\s*(.*?)\s*</td>",
     re.DOTALL,
 )
 
@@ -572,27 +590,45 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         zip_name = os.path.basename(displaypath.rstrip("/")) or "root"
         zip_name_enc = esc(zip_name, quote=True).replace("'", "\\'")
         zip_btn = (
-            f'<button class="hdr-btn sm"'
+            f'<button class="hdr-btn sm icon-only"'
             f" onclick=\"downloadZip('{zip_path_enc}','{zip_name_enc}')\""
             f' title="Download folder as ZIP">'
-            f"{SVG_DOWNLOAD} ZIP</button>"
+            f"{SVG_DOWNLOAD}</button>"
         )
+        folder_url = esc(
+            f"http://{HOSTNAME}:{PORT}" + urllib.parse.quote(displaypath, safe="/"),
+            quote=True,
+        ).replace("'", "\\'")
+        copy_folder_btn = (
+            f'<button class="hdr-btn sm icon-only"'
+            f" onclick=\"copyLink('{folder_url}')\""
+            f' title="Copy folder link">'
+            f"{SVG_LINK}</button>"
+        )
+        upload_btn = ""
+        if show_upload:
+            upload_btn = (
+                f'<button class="hdr-btn sm icon-only" onclick="toggleUpload()"'
+                f' title="Upload files">{SVG_UPLOAD_BTN}</button>'
+            )
         sort_right = '<div class="sort-spacer"></div>'
         if show_upload:
             sort_right += (
-                f'<button class="hdr-btn sm" '
-                f"onclick=\"showNewFolderModal('{esc_dp}')\">"
-                "+ Folder</button>"
-                f'<button class="hdr-btn sm" '
-                f"onclick=\"showNewFileModal('{esc_dp}')\">"
-                "+ File</button>"
+                f'<button class="hdr-btn sm icon-only" '
+                f"onclick=\"showNewFolderModal('{esc_dp}')\""
+                f' title="New folder">'
+                f"{SVG_FOLDER_PLUS}</button>"
+                f'<button class="hdr-btn sm icon-only" '
+                f"onclick=\"showNewFileModal('{esc_dp}')\""
+                f' title="New file">'
+                f"{SVG_FILE_PLUS}</button>"
             )
         elif is_cm_dir:
             sort_right += (
                 '<span class="cm-note-warn" style="padding:0">'
                 "Read-only &mdash; managed by ChartMuseum</span>"
             )
-        sort_right += zip_btn
+        sort_right += upload_btn + copy_folder_btn + zip_btn
 
         sort_bar = (
             '<div class="sort-bar">'
@@ -704,6 +740,14 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     f'<a class="act-btn dl-btn" title="Download"'
                     f' href="{link}" download>{SVG_DOWNLOAD}</a>'
                 )
+            copy_url = esc(f"http://{HOSTNAME}:{PORT}{link}", quote=True).replace(
+                "'", "\\'"
+            )
+            actions += (
+                f'<button class="act-btn copy-btn" title="Copy link"'
+                f' onclick="event.preventDefault();event.stopPropagation();'
+                f"copyLink('{copy_url}')\">{SVG_COPY}</button>"
+            )
             if not is_cm_dir and not is_system:
                 ren_path = esc(link.rstrip("/"), quote=True).replace("'", "\\'")
                 ren_name = esc(name, quote=True).replace("'", "\\'")
@@ -762,7 +806,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         html = _render_page(
             f"Caffrey's Treasure — {displaypath}",
             content,
-            header_html=_render_header(show_upload=show_upload),
+            header_html=_render_header(),
             modals=modals,
         )
         self._send_html(html)
@@ -864,7 +908,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         html = _render_page(
             f"View — {filename}",
             page_content,
-            header_html=_render_header(show_upload=False),
+            header_html=_render_header(),
             extra_head=prism_head,
             extra_scripts=prism_scripts,
         )
@@ -906,7 +950,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         html = _render_page(
             "ChartMuseum — Caffrey's Treasure",
             page_content,
-            header_html=_render_header(show_upload=False, show_charts=False),
+            header_html=_render_header(show_charts=False),
             modals=import_modal,
             extra_scripts='<script src="/__static__/js/charts.js"></script>',
         )
@@ -946,7 +990,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             error_content = (
                 '<div class="empty-state" style="padding:40px">'
                 f"<p>Could not reach <b>{esc(filer['label'])}</b></p>"
-                f"<p style=\"font-size:12px;color:var(--text-muted)\">"
+                f'<p style="font-size:12px;color:var(--text-muted)">'
                 f"{esc(str(exc))}</p>"
                 f'<p style="margin-top:12px">'
                 f'<a class="hdr-btn" href="/{esc(remote_url)}">'
@@ -955,7 +999,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             html = _render_page(
                 f"Error — {filer['label']}",
                 error_content,
-                header_html=_render_header(show_upload=False, show_charts=False),
+                header_html=_render_header(show_charts=False),
             )
             self._send_html(html)
             return
@@ -978,6 +1022,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     f'<a class="bc-chip" href="{qp}">{esc(part)}</a>'
                 )
 
+        remote_copy_url = esc(remote_url, quote=True).replace("'", "\\'")
         sort_bar = (
             '<div class="sort-bar">'
             '<span class="sort-label">Sort:</span>'
@@ -992,15 +1037,18 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             f'<a href="{esc(remote_url)}" target="_blank"'
             f' style="color:inherit;text-decoration:none">'
             f"Open on source server &#8599;</a></span>"
+            f'<button class="hdr-btn sm icon-only"'
+            f" onclick=\"copyLink('{remote_copy_url}')\""
+            f' title="Copy folder link">'
+            f"{SVG_LINK}</button>"
             "</div>"
         )
 
         items = []
         if subpath:
             parent_crumbs = subpath.rstrip("/").rsplit("/", 1)
-            parent_href = (
-                f"/__remote__/{filer_key}/"
-                + (parent_crumbs[0] + "/" if len(parent_crumbs) > 1 else "")
+            parent_href = f"/__remote__/{filer_key}/" + (
+                parent_crumbs[0] + "/" if len(parent_crumbs) > 1 else ""
             )
             items.append(
                 f'<tr class="file-item">'
@@ -1042,19 +1090,34 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 except (ValueError, IndexError):
                     pass
 
-            actions = ""
+            date_str = entry["date"]
+            raw_mtime = 0
+            try:
+                raw_mtime = int(
+                    datetime.strptime(date_str, "%Y-%m-%d %H:%M").timestamp()
+                )
+            except (ValueError, TypeError):
+                pass
+
+            copy_url_raw = remote_url + entry["href"]
+            copy_url_esc = esc(copy_url_raw, quote=True).replace("'", "\\'")
+
+            actions = (
+                f'<button class="act-btn copy-btn" title="Copy link"'
+                f' onclick="event.preventDefault();event.stopPropagation();'
+                f"copyLink('{copy_url_esc}')\">{SVG_COPY}</button>"
+            )
             if not is_dir:
-                actions = (
+                actions += (
                     f'<a class="act-btn dl-btn" title="Download"'
                     f' href="{esc(link)}" download>{SVG_DOWNLOAD}</a>'
                 )
 
-            date_str = entry["date"]
             items.append(
                 f'<tr class="file-item"'
                 f' data-name="{esc(name.lower())}"'
                 f' data-size="{raw_size}"'
-                f' data-mtime="0"'
+                f' data-mtime="{raw_mtime}"'
                 f' data-isdir="{"1" if is_dir else "0"}">'
                 f'<td class="ft-name">'
                 f'<a class="file-link" href="{esc(link)}"'
@@ -1086,7 +1149,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         html = _render_page(
             f'{filer["label"]} — {display_sub or "/"}',
             content,
-            header_html=_render_header(show_upload=False, show_charts=False),
+            header_html=_render_header(show_charts=False),
         )
         self._send_html(html)
 
@@ -1131,7 +1194,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         html = _render_page(
             f"Edit — {filename}",
             page_content,
-            header_html=_render_header(show_upload=False),
+            header_html=_render_header(),
             extra_scripts='<script src="/__static__/js/editor.js"></script>',
         )
         self._send_html(html)

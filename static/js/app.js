@@ -72,6 +72,26 @@
     if (menu) menu.classList.remove("open");
   });
 
+  /* ── Copy link ──────────────────────────────────────────────── */
+
+  window.copyLink = function (url) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () {
+        toast("Link copied", "success");
+      });
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = url;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      toast("Link copied", "success");
+    }
+  };
+
   /* ── Upload ──────────────────────────────────────────────────── */
 
   window.toggleUpload = function () {
