@@ -10,9 +10,16 @@ import os
 import sys
 import json
 import re
+import gzip
+import io
+import zipfile
 import shutil
 import logging
 import subprocess
+import threading
+import time
+import uuid
+import tempfile
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -99,12 +106,130 @@ def _get_cm_version():
             text=True,
             timeout=5,
         )
-        raw = (result.stdout.strip() or result.stderr.strip())
+        raw = result.stdout.strip() or result.stderr.strip()
         m = re.search(r"(\d+\.\d+\.\d+)", raw)
         _cm_version_cache = f"v{m.group(1)}" if m else raw or ""
     except Exception:
         _cm_version_cache = ""
     return _cm_version_cache
+
+
+def _gzip_bytes(data):
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=6) as f:
+        f.write(data)
+    return buf.getvalue()
+
+
+_static_gz_cache = {}
+
+
+# ── ZIP job infrastructure ─────────────────────────────────────────────
+
+_zip_jobs = {}
+_zip_lock = threading.Lock()
+_MAX_ZIP_BYTES = 4 * 1024 * 1024 * 1024  # 4 GB
+
+
+def _fmt_size(size):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024.0:
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} PB"
+
+
+def _safe_unlink(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _cleanup_old_jobs():
+    now = time.time()
+    with _zip_lock:
+        for jid in list(_zip_jobs):
+            job = _zip_jobs[jid]
+            age = now - job.get("finished_at", now)
+            if job["status"] in ("done", "error", "cancelled") and age > 600:
+                if job.get("zip_path"):
+                    _safe_unlink(job["zip_path"])
+                del _zip_jobs[jid]
+
+
+def _zip_worker(job_id, local_path, cancel_event):
+    job = _zip_jobs[job_id]
+
+    file_list = []
+    total_bytes = 0
+    for root, _dirs, files in os.walk(local_path):
+        if cancel_event.is_set():
+            job.update(status="cancelled", finished_at=time.time())
+            return
+        for fname in files:
+            full = os.path.join(root, fname)
+            try:
+                sz = os.path.getsize(full)
+                file_list.append((full, sz))
+                total_bytes += sz
+            except OSError:
+                pass
+
+    if total_bytes > _MAX_ZIP_BYTES:
+        job.update(
+            status="error",
+            error=(
+                f"Directory too large ({_fmt_size(total_bytes)}). "
+                f"Limit is {_fmt_size(_MAX_ZIP_BYTES)}."
+            ),
+            finished_at=time.time(),
+        )
+        return
+
+    job.update(
+        status="zipping",
+        total_files=len(file_list),
+        total_bytes=total_bytes,
+    )
+
+    dirname = job["dirname"]
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix="caffrey-")
+    os.close(tmp_fd)
+    job["zip_path"] = tmp_path
+
+    try:
+        processed_bytes = 0
+        with zipfile.ZipFile(
+            tmp_path, "w", zipfile.ZIP_DEFLATED, compresslevel=1
+        ) as zf:
+            for i, (full, sz) in enumerate(file_list):
+                if cancel_event.is_set():
+                    job.update(status="cancelled", finished_at=time.time())
+                    _safe_unlink(tmp_path)
+                    return
+                arcname = os.path.join(dirname, os.path.relpath(full, local_path))
+                try:
+                    zf.write(full, arcname)
+                    processed_bytes += sz
+                    job["processed_files"] = i + 1
+                    job["bytes_processed"] = processed_bytes
+                except (OSError, PermissionError):
+                    pass
+
+        job.update(
+            status="done",
+            zip_size=os.path.getsize(tmp_path),
+            finished_at=time.time(),
+        )
+        log.info(
+            "ZIP ready: %s (%s)",
+            dirname,
+            _fmt_size(job["zip_size"]),
+        )
+    except Exception as exc:
+        job.update(status="error", error=str(exc), finished_at=time.time())
+        _safe_unlink(tmp_path)
 
 
 _CHARTS_BTN_HTML = (
@@ -184,6 +309,12 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/__api__/readfile":
             qs = urllib.parse.parse_qs(parsed.query)
             return self._handle_readfile(qs.get("path", [""])[0])
+        if path == "/__api__/zip-progress":
+            qs = urllib.parse.parse_qs(parsed.query)
+            return self._handle_zip_progress(qs.get("id", [""])[0])
+        if path == "/__api__/zip-download":
+            qs = urllib.parse.parse_qs(parsed.query)
+            return self._handle_zip_download(qs.get("id", [""])[0])
         if path.startswith("/__api__/cm/"):
             return self._proxy_cm("GET", path[len("/__api__/cm") :])  # noqa: E203
 
@@ -205,6 +336,10 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return self._handle_savefile()
         if path == "/__api__/rename":
             return self._handle_rename()
+        if path == "/__api__/zip-start":
+            return self._handle_zip_start()
+        if path == "/__api__/zip-cancel":
+            return self._handle_zip_cancel()
         if path == "/__api__/chart-download":
             return self._handle_chart_download()
         if path.startswith("/__api__/cm/"):
@@ -262,6 +397,23 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── Static file serving (app assets) ─────────────────────────
 
+    def _send_html(self, html_str):
+        """Send an HTML response with gzip when the client supports it."""
+        encoded = html_str.encode("utf-8", "surrogateescape")
+        use_gz = (
+            "gzip" in self.headers.get("Accept-Encoding", "") and len(encoded) > 512
+        )
+        if use_gz:
+            encoded = _gzip_bytes(encoded)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        if use_gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
+        self.end_headers()
+        self.wfile.write(encoded)
+
     def _serve_static(self, rel_path):
         """Serve files from the application's static/ directory."""
         safe = os.path.normpath(rel_path).lstrip("/").lstrip("\\")
@@ -274,11 +426,37 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         ext = os.path.splitext(safe)[1].lower()
         ctype = _STATIC_MIME.get(ext, "application/octet-stream")
 
-        data = local.read_bytes()
+        stat = local.stat()
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.end_headers()
+            return
+
+        cache_key = (str(local), stat.st_mtime_ns)
+        accepts_gz = "gzip" in self.headers.get("Accept-Encoding", "")
+        use_gz = accepts_gz and ext in (".css", ".js", ".svg")
+
+        if use_gz and cache_key in _static_gz_cache:
+            data = _static_gz_cache[cache_key]
+        else:
+            raw = local.read_bytes()
+            if use_gz:
+                data = _gzip_bytes(raw)
+                _static_gz_cache[cache_key] = data
+            else:
+                data = raw
+
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
+        if use_gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
         self.end_headers()
         self.wfile.write(data)
 
@@ -334,12 +512,20 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 "</div></div>"
             )
 
-        # Sort bar (with create buttons on the right)
-        sort_right = ""
+        # Sort bar (with create buttons + ZIP on the right)
+        esc_dp = esc(displaypath, quote=True)
+        zip_path_enc = esc(displaypath, quote=True).replace("'", "\\'")
+        zip_name = os.path.basename(displaypath.rstrip("/")) or "root"
+        zip_name_enc = esc(zip_name, quote=True).replace("'", "\\'")
+        zip_btn = (
+            f'<button class="hdr-btn sm"'
+            f" onclick=\"downloadZip('{zip_path_enc}','{zip_name_enc}')\""
+            f' title="Download folder as ZIP">'
+            f"{SVG_DOWNLOAD} ZIP</button>"
+        )
+        sort_right = '<div class="sort-spacer"></div>'
         if show_upload:
-            esc_dp = esc(displaypath, quote=True)
-            sort_right = (
-                '<div class="sort-spacer"></div>'
+            sort_right += (
                 f'<button class="hdr-btn sm" '
                 f"onclick=\"showNewFolderModal('{esc_dp}')\">"
                 "+ Folder</button>"
@@ -348,11 +534,11 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 "+ File</button>"
             )
         elif is_cm_dir:
-            sort_right = (
-                '<div class="sort-spacer"></div>'
+            sort_right += (
                 '<span class="cm-note-warn" style="padding:0">'
                 "Read-only &mdash; managed by ChartMuseum</span>"
             )
+        sort_right += zip_btn
 
         sort_bar = (
             '<div class="sort-bar">'
@@ -448,7 +634,18 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     f"location.href='/__editor__?file={elink}'\">"
                     f"{SVG_EDIT}</button>"
                 )
-            if not is_dir:
+            if is_dir:
+                zip_path_esc = esc(link.rstrip("/") + "/", quote=True).replace(
+                    "'", "\\'"
+                )
+                zip_name_esc = esc(name, quote=True).replace("'", "\\'")
+                actions += (
+                    f'<button class="act-btn dl-btn" title="Download as ZIP"'
+                    f' onclick="event.preventDefault();event.stopPropagation();'
+                    f"downloadZip('{zip_path_esc}','{zip_name_esc}')\">"
+                    f"{SVG_DOWNLOAD}</button>"
+                )
+            else:
                 actions += (
                     f'<a class="act-btn dl-btn" title="Download"'
                     f' href="{link}" download>{SVG_DOWNLOAD}</a>'
@@ -514,13 +711,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             header_html=_render_header(show_upload=show_upload),
             modals=modals,
         )
-
-        encoded = html.encode("utf-8", "surrogateescape")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        self._send_html(html)
         return None
 
     # ── File Viewer ──────────────────────────────────────────────
@@ -589,16 +780,17 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         prism_scripts = (
             "<script>window.Prism=window.Prism||{};"
             "Prism.manual=true;</script>"
-            '<script src="https://cdn.jsdelivr.net/npm/'
+            '<script defer src="https://cdn.jsdelivr.net/npm/'
             'prismjs@1.29.0/prism.min.js"></script>'
-            '<script src="https://cdn.jsdelivr.net/npm/'
+            '<script defer src="https://cdn.jsdelivr.net/npm/'
             "prismjs@1.29.0/plugins/line-numbers/"
             'prism-line-numbers.min.js"></script>'
-            '<script src="https://cdn.jsdelivr.net/npm/'
+            '<script defer src="https://cdn.jsdelivr.net/npm/'
             "prismjs@1.29.0/plugins/autoloader/"
             'prism-autoloader.min.js"></script>'
             + json_pretty
-            + "<script>Prism.highlightAll();</script>"
+            + "<script>document.addEventListener('DOMContentLoaded',"
+            "function(){Prism.highlightAll()});</script>"
         )
 
         page_content = render_template(
@@ -622,13 +814,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             extra_head=prism_head,
             extra_scripts=prism_scripts,
         )
-
-        encoded = html.encode("utf-8", "surrogateescape")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        self._send_html(html)
 
     # ── Charts Page ──────────────────────────────────────────────
 
@@ -670,13 +856,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             modals=import_modal,
             extra_scripts='<script src="/__static__/js/charts.js"></script>',
         )
-
-        encoded = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        self._send_html(html)
 
     # ── Editor Page ──────────────────────────────────────────────
 
@@ -722,13 +902,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             header_html=_render_header(show_upload=False),
             extra_scripts='<script src="/__static__/js/editor.js"></script>',
         )
-
-        encoded = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        self._send_html(html)
 
     # ── API Handlers ─────────────────────────────────────────────
 
@@ -1123,6 +1297,130 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_zip_start(self):
+        try:
+            data = self._read_json_body()
+        except Exception:
+            self._send_json({"error": "Invalid body"}, 400)
+            return
+
+        dir_path = data.get("path", "").strip()
+        if not dir_path:
+            self._send_json({"error": "Path required"}, 400)
+            return
+
+        local = self._safe_local(dir_path)
+        if not local or not os.path.isdir(local):
+            self._send_json({"error": "Directory not found"}, 404)
+            return
+
+        _cleanup_old_jobs()
+
+        job_id = uuid.uuid4().hex[:12]
+        cancel_event = threading.Event()
+        dirname = os.path.basename(local.rstrip("/")) or "download"
+
+        job = {
+            "status": "scanning",
+            "processed_files": 0,
+            "total_files": 0,
+            "bytes_processed": 0,
+            "total_bytes": 0,
+            "zip_path": None,
+            "zip_size": 0,
+            "dirname": dirname,
+            "cancel_event": cancel_event,
+            "error": "",
+            "started_at": time.time(),
+            "finished_at": 0,
+        }
+
+        with _zip_lock:
+            _zip_jobs[job_id] = job
+
+        t = threading.Thread(
+            target=_zip_worker, args=(job_id, local, cancel_event), daemon=True
+        )
+        t.start()
+        self._send_json({"job_id": job_id, "dirname": dirname})
+
+    def _handle_zip_progress(self, job_id):
+        job = _zip_jobs.get(job_id)
+        if not job:
+            self._send_json({"error": "Job not found"}, 404)
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        try:
+            while True:
+                evt = {
+                    "status": job["status"],
+                    "processed_files": job["processed_files"],
+                    "total_files": job["total_files"],
+                    "bytes_processed": job["bytes_processed"],
+                    "total_bytes": job["total_bytes"],
+                }
+                if job["status"] == "done":
+                    evt["zip_size"] = job.get("zip_size", 0)
+                elif job["status"] == "error":
+                    evt["error"] = job.get("error", "")
+
+                self.wfile.write(f"data: {json.dumps(evt)}\n\n".encode())
+                self.wfile.flush()
+
+                if job["status"] in ("done", "error", "cancelled"):
+                    break
+                time.sleep(0.25)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            job["cancel_event"].set()
+
+    def _handle_zip_download(self, job_id):
+        job = _zip_jobs.get(job_id)
+        if not job or job["status"] != "done":
+            self._send_json({"error": "ZIP not ready"}, 404)
+            return
+
+        zip_path = job.get("zip_path")
+        if not zip_path or not os.path.exists(zip_path):
+            self._send_json({"error": "ZIP file missing"}, 404)
+            return
+
+        zip_size = os.path.getsize(zip_path)
+        safe_name = job.get("dirname", "download").replace('"', "_")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header(
+            "Content-Disposition", f'attachment; filename="{safe_name}.zip"'
+        )
+        self.send_header("Content-Length", str(zip_size))
+        self.end_headers()
+
+        with open(zip_path, "rb") as f:
+            shutil.copyfileobj(f, self.wfile)
+
+        _safe_unlink(zip_path)
+        with _zip_lock:
+            _zip_jobs.pop(job_id, None)
+
+    def _handle_zip_cancel(self):
+        try:
+            data = self._read_json_body()
+        except Exception:
+            self._send_json({"error": "Invalid body"}, 400)
+            return
+
+        job_id = data.get("id", "")
+        job = _zip_jobs.get(job_id)
+        if job:
+            job["cancel_event"].set()
+        self._send_json({"ok": True})
+
     # ── File Serving Overrides ───────────────────────────────────
 
     def guess_type(self, path):
@@ -1235,8 +1533,9 @@ def run_server(directory, port):
         log.error("Directory '%s' does not exist or is not a directory", directory)
         sys.exit(1)
 
-    class ReusableTCPServer(socketserver.TCPServer):
+    class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         allow_reuse_address = True
+        daemon_threads = True
 
     handler = partial(FileServerHandler, directory=directory)
 

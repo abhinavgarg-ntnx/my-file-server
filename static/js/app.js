@@ -508,6 +508,224 @@
 
   /* ── Keyboard shortcuts ──────────────────────────────────────── */
 
+  /* ── ZIP download tray (multi-card, persistent history) ────── */
+
+  function fmtSize(b) {
+    if (b < 1024) return b + " B";
+    if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+    if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB";
+    return (b / 1073741824).toFixed(1) + " GB";
+  }
+
+  var zipTray = {
+    container: null,
+    cards: {},
+
+    _ensureContainer: function () {
+      if (!this.container) {
+        var c = document.createElement("div");
+        c.id = "zip-tray";
+        c.className = "zip-tray";
+        document.body.appendChild(c);
+        this.container = c;
+      }
+    },
+
+    _cardHTML: function (jobId, name) {
+      return (
+        '<div class="zip-hdr" onclick="zipTrayToggle(\'' +
+        jobId +
+        "')\">" +
+        '<span class="zip-title">' +
+        '<span class="zip-spinner"></span>Preparing…</span>' +
+        '<span class="zip-hdr-btns">' +
+        '<button class="zip-hdr-btn zip-toggle-btn" ' +
+        "onclick=\"event.stopPropagation();zipTrayToggle('" +
+        jobId +
+        '\')" title="Toggle">' +
+        '<span class="zip-arrow">&#9660;</span></button>' +
+        '<button class="zip-hdr-btn zip-close-btn" ' +
+        "onclick=\"event.stopPropagation();zipTrayClose('" +
+        jobId +
+        '\')" title="Close">&times;</button>' +
+        "</span></div>" +
+        '<div class="zip-body">' +
+        '<div class="zip-row">' +
+        '<span class="zip-name">' +
+        name +
+        "/</span>" +
+        '<span class="zip-pct">0%</span></div>' +
+        '<div class="zip-bar"><div class="zip-bar-fill"></div></div>' +
+        '<div class="zip-detail">Scanning files…</div>' +
+        "</div>"
+      );
+    },
+
+    start: function (jobId, name) {
+      this._ensureContainer();
+      var div = document.createElement("div");
+      div.className = "zip-card zip-card--active";
+      div.dataset.jobId = jobId;
+      div.innerHTML = this._cardHTML(jobId, name);
+      this.container.appendChild(div);
+      this.cards[jobId] = { el: div, sse: null, name: name };
+      this._listen(jobId, name);
+    },
+
+    _listen: function (jobId, name) {
+      var card = this.cards[jobId];
+      if (!card) return;
+      card.sse = new EventSource("/__api__/zip-progress?id=" + jobId);
+
+      card.sse.onmessage = function (e) {
+        var d = JSON.parse(e.data);
+        zipTray._updateCard(jobId, d);
+
+        if (d.status === "done") {
+          card.sse.close();
+          card.sse = null;
+          zipTray._triggerDownload(jobId, name);
+        } else if (d.status === "error") {
+          card.sse.close();
+          card.sse = null;
+        } else if (d.status === "cancelled") {
+          card.sse.close();
+          card.sse = null;
+          zipTray.removeCard(jobId);
+        }
+      };
+
+      card.sse.onerror = function () {
+        card.sse.close();
+        card.sse = null;
+      };
+    },
+
+    _updateCard: function (jobId, d) {
+      var card = this.cards[jobId];
+      if (!card) return;
+      var el = card.el;
+      var pct =
+        d.total_bytes > 0
+          ? Math.round((d.bytes_processed / d.total_bytes) * 100)
+          : 0;
+
+      el.querySelector(".zip-bar-fill").style.width = pct + "%";
+      el.querySelector(".zip-pct").textContent = pct + "%";
+      var title = el.querySelector(".zip-title");
+      var detail = el.querySelector(".zip-detail");
+
+      if (d.status === "scanning") {
+        title.innerHTML = '<span class="zip-spinner"></span>Scanning…';
+        detail.textContent = "Discovering files…";
+      } else if (d.status === "zipping") {
+        title.innerHTML = '<span class="zip-spinner"></span>Zipping…';
+        detail.textContent =
+          d.processed_files +
+          " / " +
+          d.total_files +
+          " files  ·  " +
+          fmtSize(d.bytes_processed) +
+          " / " +
+          fmtSize(d.total_bytes);
+      } else if (d.status === "done") {
+        title.innerHTML = "&#10003; ZIP Ready";
+        el.querySelector(".zip-pct").textContent = "100%";
+        el.querySelector(".zip-bar-fill").style.width = "100%";
+        detail.textContent = "ZIP size: " + fmtSize(d.zip_size);
+        el.className = "zip-card zip-card--done";
+      } else if (d.status === "error") {
+        title.innerHTML = "&#10007; Failed";
+        detail.textContent = d.error || "Unknown error";
+        el.className = "zip-card zip-card--error";
+      }
+    },
+
+    _triggerDownload: function (jobId, name) {
+      var a = document.createElement("a");
+      a.href = "/__api__/zip-download?id=" + jobId;
+      a.download = name + ".zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    },
+
+    closeCard: function (jobId) {
+      var card = this.cards[jobId];
+      if (!card) return;
+      var isActive = card.el.classList.contains("zip-card--active");
+      if (isActive && card.sse) {
+        card.sse.close();
+        card.sse = null;
+        fetch("/__api__/zip-cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: jobId }),
+        });
+        toast("ZIP cancelled", "info");
+      }
+      this.removeCard(jobId);
+    },
+
+    removeCard: function (jobId) {
+      var card = this.cards[jobId];
+      if (!card) return;
+      if (card.sse) card.sse.close();
+      card.el.classList.add("zip-card--removing");
+      setTimeout(function () {
+        card.el.remove();
+        delete zipTray.cards[jobId];
+      }, 250);
+    },
+
+    toggleCard: function (jobId) {
+      var card = this.cards[jobId];
+      if (card) card.el.classList.toggle("zip-card--collapsed");
+    },
+  };
+
+  window.zipTrayToggle = function (id) {
+    zipTray.toggleCard(id);
+  };
+  window.zipTrayClose = function (id) {
+    zipTray.closeCard(id);
+  };
+
+  window.downloadZip = function (dirPath, name) {
+    fetch("/__api__/zip-start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: dirPath }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (d) {
+        if (d.error) {
+          toast(d.error, "error");
+          return;
+        }
+        zipTray.start(d.job_id, name);
+      })
+      .catch(function () {
+        toast("Failed to start ZIP download", "error");
+      });
+  };
+
+  window.addEventListener("beforeunload", function () {
+    var ids = Object.keys(zipTray.cards);
+    for (var i = 0; i < ids.length; i++) {
+      var card = zipTray.cards[ids[i]];
+      if (card && card.sse) {
+        card.sse.close();
+        var blob = new Blob([JSON.stringify({ id: ids[i] })], {
+          type: "application/json",
+        });
+        navigator.sendBeacon("/__api__/zip-cancel", blob);
+      }
+    }
+  });
+
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
       window.closeDeleteModal && window.closeDeleteModal();

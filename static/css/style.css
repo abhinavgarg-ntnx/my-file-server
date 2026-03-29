@@ -1135,6 +1135,141 @@ html.light .cm-cmd-row code {
     tab-size: 2;
     outline: none;
 }
+/* ── ZIP download tray (multi-card, persistent history) ──────── */
+.zip-tray {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 340px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+}
+.zip-card {
+    background: var(--bg-card-solid);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 32px rgba(0,0,0,.35);
+    overflow: hidden;
+    animation: zipSlideIn .3s ease;
+    pointer-events: auto;
+}
+.zip-card--removing {
+    animation: zipSlideOut .25s ease forwards;
+}
+@keyframes zipSlideIn {
+    from { opacity: 0; transform: translateY(16px) scale(.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes zipSlideOut {
+    to { opacity: 0; transform: translateX(60px); height: 0; margin: 0; padding: 0; }
+}
+.zip-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-hover);
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    user-select: none;
+}
+.zip-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.zip-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: zipSpin .7s linear infinite;
+    flex-shrink: 0;
+}
+.zip-card--done .zip-spinner,
+.zip-card--error .zip-spinner { display: none; }
+@keyframes zipSpin { to { transform: rotate(360deg); } }
+.zip-hdr-btns { display: flex; gap: 2px; flex-shrink: 0; }
+.zip-hdr-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 7px;
+    font-size: 15px;
+    border-radius: 4px;
+    line-height: 1;
+}
+.zip-hdr-btn:hover {
+    background: rgba(255,255,255,.08);
+    color: var(--text-primary);
+}
+.zip-close-btn:hover { color: var(--danger); }
+.zip-arrow {
+    display: inline-block;
+    font-size: 10px;
+    transition: transform .2s ease;
+}
+.zip-card--collapsed .zip-arrow {
+    transform: rotate(-90deg);
+}
+.zip-body { padding: 12px 14px; }
+.zip-card--collapsed .zip-body { display: none; }
+.zip-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+}
+.zip-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.zip-pct {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    flex-shrink: 0;
+    margin-left: 10px;
+}
+.zip-card--done .zip-pct { color: var(--success); }
+.zip-card--error .zip-pct { color: var(--danger); }
+.zip-bar {
+    height: 4px;
+    background: var(--border-subtle);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+.zip-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width .25s ease;
+    min-width: 0;
+}
+.zip-card--done .zip-bar-fill { background: var(--success); }
+.zip-card--error .zip-bar-fill { background: var(--danger); }
+.zip-detail {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
 /* ── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .header {
@@ -1155,5 +1290,11 @@ html.light .cm-cmd-row code {
    }
     .cm-repo-cmd {
         text-align: left;
+   }
+    .zip-tray {
+        width: calc(100% - 32px);
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
    }
 }
