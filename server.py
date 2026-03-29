@@ -40,6 +40,7 @@ with warnings.catch_warnings():
 from config import (
     STATIC_DIR,
     TEMPLATES_DIR,
+    DATA_DIR,
     PORT,
     DIRECTORY,
     DELETE_PASSWORD,
@@ -71,6 +72,9 @@ from svgs import (
     SVG_FILE_PLUS,
     SVG_HELM,
     SVG_LINK,
+    SVG_STAR_OUTLINE,
+    SVG_STAR_FILLED,
+    SVG_SEARCH,
 )
 from charts import download_and_extract_chart, HAS_REQUESTS
 
@@ -128,6 +132,24 @@ def _gzip_bytes(data):
 
 
 _static_gz_cache = {}
+
+
+# ── Favorites persistence ─────────────────────────────────────────────
+
+_FAVORITES_FILE = DATA_DIR / "favorites.json"
+_fav_lock = threading.Lock()
+
+
+def _load_favorites():
+    try:
+        return set(json.loads(_FAVORITES_FILE.read_text()))
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return set()
+
+
+def _save_favorites(favs):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _FAVORITES_FILE.write_text(json.dumps(sorted(favs)))
 
 
 # ── ZIP job infrastructure ─────────────────────────────────────────────
@@ -280,6 +302,12 @@ if REMOTE_FILERS:
     )
 
 
+_FAVORITES_BTN_HTML = (
+    '<a href="/__favorites__" class="hdr-btn icon-only" title="Favorites">'
+    f"{SVG_STAR_FILLED}</a>"
+)
+
+
 def _render_header(show_charts=True):
     """Render the header partial."""
     charts_btn = _CHARTS_BTN_HTML if show_charts else ""
@@ -287,6 +315,7 @@ def _render_header(show_charts=True):
         "header.html",
         CHARTS_BUTTON=charts_btn,
         FILERS_BUTTON=_FILERS_DROPDOWN,
+        FAVORITES_BUTTON=_FAVORITES_BTN_HTML,
     )
 
 
@@ -387,6 +416,13 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/__api__/zip-download":
             qs = urllib.parse.parse_qs(parsed.query)
             return self._handle_zip_download(qs.get("id", [""])[0])
+        if path == "/__favorites__":
+            return self._serve_favorites_page()
+        if path == "/__api__/favorites":
+            return self._handle_favorites_get()
+        if path == "/__api__/search":
+            qs = urllib.parse.parse_qs(parsed.query)
+            return self._handle_search(qs)
         if path.startswith("/__api__/cm/"):
             return self._proxy_cm("GET", path[len("/__api__/cm") :])  # noqa: E203
 
@@ -412,6 +448,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return self._handle_zip_start()
         if path == "/__api__/zip-cancel":
             return self._handle_zip_cancel()
+        if path == "/__api__/favorites":
+            return self._handle_favorites_post()
         if path == "/__api__/chart-download":
             return self._handle_chart_download()
         if path.startswith("/__api__/cm/"):
@@ -548,6 +586,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         is_cm_dir = self._is_cm_protected(path)
         show_upload = not is_cm_dir
         esc = html_module.escape
+        favorites = _load_favorites()
 
         # Breadcrumb
         bc = f'<a class="bc-chip" href="/">{SVG_HOME} Home</a>'
@@ -708,6 +747,15 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             system_tag = ' <span class="sys-tag">System</span>' if is_system else ""
 
             actions = ""
+            fav_path = esc(link, quote=True).replace("'", "\\'")
+            is_fav = link in favorites
+            actions += (
+                f'<button class="act-btn fav-btn{"" if not is_fav else " fav-active"}"'
+                f' title="{"Remove from favorites" if is_fav else "Add to favorites"}"'
+                f' onclick="event.preventDefault();event.stopPropagation();'
+                f"toggleFav('{fav_path}',this)\">"
+                f"{SVG_STAR_FILLED if is_fav else SVG_STAR_OUTLINE}</button>"
+            )
             if is_viewable:
                 vlink = urllib.parse.quote(link, safe="/")
                 actions += (
@@ -787,10 +835,24 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 "This directory is empty</td></tr>"
             )
 
+        search_dir_enc = esc(displaypath, quote=True).replace("'", "\\'")
+        search_bar = (
+            '<div class="search-bar">'
+            f'<div class="search-input-wrap">{SVG_SEARCH}'
+            f'<input class="search-input" id="search-input"'
+            f' type="text" placeholder="Filter or search files…"'
+            f' data-dir="{esc(displaypath, quote=True)}">'
+            '<kbd class="search-kbd">/</kbd>'
+            "</div>"
+            '<div id="search-results" class="search-results"></div>'
+            "</div>"
+        )
+
         content = (
             f'<div class="breadcrumb">{bc}</div>'
             f"{upload_html}"
             f"{sort_bar}"
+            f"{search_bar}"
             f'<div class="file-list-wrap">'
             f'<table class="file-table">'
             f'<tbody class="file-list">{"".join(items)}</tbody>'
@@ -1005,6 +1067,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         entries = _parse_apache_listing(raw_html)
+        favorites = _load_favorites()
 
         display_sub = "/" + subpath if subpath else ""
         bc = (
@@ -1102,16 +1165,22 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             copy_url_raw = remote_url + entry["href"]
             copy_url_esc = esc(copy_url_raw, quote=True).replace("'", "\\'")
 
-            actions = (
+            actions = ""
+            fav_link = link if is_dir else copy_url_raw
+            fav_path = esc(fav_link, quote=True).replace("'", "\\'")
+            is_fav = fav_link in favorites
+            actions += (
+                f'<button class="act-btn fav-btn{"" if not is_fav else " fav-active"}"'
+                f' title="{"Remove from favorites" if is_fav else "Add to favorites"}"'
+                f' onclick="event.preventDefault();event.stopPropagation();'
+                f"toggleFav('{fav_path}',this)\">"
+                f"{SVG_STAR_FILLED if is_fav else SVG_STAR_OUTLINE}</button>"
+            )
+            actions += (
                 f'<button class="act-btn copy-btn" title="Copy link"'
                 f' onclick="event.preventDefault();event.stopPropagation();'
                 f"copyLink('{copy_url_esc}')\">{SVG_COPY}</button>"
             )
-            if not is_dir:
-                actions += (
-                    f'<a class="act-btn dl-btn" title="Download"'
-                    f' href="{esc(link)}" download>{SVG_DOWNLOAD}</a>'
-                )
 
             items.append(
                 f'<tr class="file-item"'
@@ -1152,6 +1221,159 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             header_html=_render_header(show_charts=False),
         )
         self._send_html(html)
+
+    # ── Favorites ─────────────────────────────────────────────────
+
+    def _handle_favorites_get(self):
+        with _fav_lock:
+            favs = sorted(_load_favorites())
+        self._send_json({"favorites": favs})
+
+    def _handle_favorites_post(self):
+        try:
+            data = self._read_json_body()
+        except Exception:
+            self._send_json({"error": "Invalid body"}, 400)
+            return
+        action = data.get("action")
+        path = data.get("path", "").strip()
+        if not path:
+            self._send_json({"error": "Path required"}, 400)
+            return
+        with _fav_lock:
+            favs = _load_favorites()
+            if action == "add":
+                favs.add(path)
+            elif action == "remove":
+                favs.discard(path)
+            else:
+                self._send_json({"error": "action must be add or remove"}, 400)
+                return
+            _save_favorites(favs)
+        self._send_json({"ok": True, "favorites": sorted(favs)})
+
+    def _serve_favorites_page(self):
+        esc = html_module.escape
+        with _fav_lock:
+            favs = sorted(_load_favorites())
+
+        bc = (
+            f'<a class="bc-chip" href="/">{SVG_HOME} Home</a>'
+            f'<span class="bc-sep">/</span>'
+            f'<span class="bc-chip">{SVG_STAR_FILLED} Favorites</span>'
+        )
+
+        items = []
+        for fav_path in favs:
+            name = fav_path.rstrip("/").rsplit("/", 1)[-1] or fav_path
+            is_remote = fav_path.startswith("/__remote__/") or fav_path.startswith("http")
+            is_dir = fav_path.endswith("/")
+            icon = get_icon(name, is_dir=is_dir)
+            display_name = name + ("/" if is_dir else "")
+
+            badge = ""
+            if is_remote:
+                if fav_path.startswith("/__remote__/"):
+                    filer_key = fav_path.strip("/").split("/")[1] if "/" in fav_path.strip("/") else ""
+                    label = REMOTE_FILERS.get(filer_key, {}).get("label", filer_key)
+                else:
+                    label = "Remote"
+                badge = f' <span class="sys-tag">{esc(label)}</span>'
+            else:
+                local = os.path.join(DIRECTORY, fav_path.strip("/"))
+                if not os.path.exists(local):
+                    badge = (
+                        ' <span class="sys-tag"'
+                        ' style="background:var(--danger-subtle);color:var(--danger)">'
+                        "Missing</span>"
+                    )
+
+            href = fav_path
+            if not is_dir and not is_remote:
+                ext = os.path.splitext(name)[1].lower()
+                if ext in VIEWABLE_EXTENSIONS:
+                    href = f"/__viewer__?file={urllib.parse.quote(fav_path, safe='/')}"
+
+            rm_path = esc(fav_path, quote=True).replace("'", "\\'")
+            actions = (
+                f'<button class="act-btn fav-btn fav-active" title="Remove from favorites"'
+                f' onclick="event.preventDefault();event.stopPropagation();'
+                f"toggleFav('{rm_path}',this)\">{SVG_STAR_FILLED}</button>"
+            )
+            items.append(
+                f'<tr class="file-item" data-name="{esc(name.lower())}"'
+                f' data-size="0" data-mtime="0" data-isdir="{"1" if is_dir else "0"}">'
+                f'<td class="ft-name">'
+                f'<a class="file-link" href="{esc(href)}">{icon}'
+                f'<span class="file-name">{esc(display_name)}</span>{badge}</a></td>'
+                f'<td class="ft-size">-</td>'
+                f'<td class="ft-date">-</td>'
+                f'<td class="ft-actions"><div class="file-actions">{actions}</div></td>'
+                f"</tr>"
+            )
+
+        if not items:
+            items.append(
+                '<tr><td colspan="4" class="empty-state">'
+                "No favorites yet — click the star on any file or folder to save it here"
+                "</td></tr>"
+            )
+
+        content = (
+            f'<div class="breadcrumb">{bc}</div>'
+            f'<div class="file-list-wrap">'
+            f'<table class="file-table">'
+            f'<tbody class="file-list">{"".join(items)}</tbody>'
+            f"</table></div>"
+        )
+        html = _render_page(
+            "Favorites — Caffrey's Treasure",
+            content,
+            header_html=_render_header(),
+        )
+        self._send_html(html)
+
+    # ── Search API ────────────────────────────────────────────────
+
+    def _handle_search(self, qs):
+        query = qs.get("q", [""])[0].strip().lower()
+        search_dir = qs.get("dir", ["/"])[0]
+        if not query or len(query) < 2:
+            self._send_json({"results": []})
+            return
+
+        local_root = os.path.realpath(os.path.join(DIRECTORY, search_dir.strip("/")))
+        base = os.path.realpath(DIRECTORY)
+        if not local_root.startswith(base):
+            self._send_json({"results": []})
+            return
+
+        results = []
+        deadline = time.time() + 5
+        max_results = 200
+        try:
+            for root, dirs, files in os.walk(local_root):
+                if time.time() > deadline or len(results) >= max_results:
+                    break
+                rel_root = "/" + os.path.relpath(root, base)
+                if rel_root == "/.":
+                    rel_root = "/"
+                for d in dirs:
+                    if query in d.lower():
+                        rp = rel_root.rstrip("/") + "/" + d + "/"
+                        results.append({"name": d + "/", "path": rp, "is_dir": True})
+                        if len(results) >= max_results:
+                            break
+                for f in files:
+                    if query in f.lower():
+                        rp = rel_root.rstrip("/") + "/" + f
+                        results.append({"name": f, "path": rp, "is_dir": False})
+                        if len(results) >= max_results:
+                            break
+        except PermissionError:
+            pass
+
+        self._send_json({"results": results, "truncated": len(results) >= max_results})
 
     # ── Editor Page ──────────────────────────────────────────────
 
