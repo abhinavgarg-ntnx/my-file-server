@@ -19,6 +19,7 @@
     <span class="cm-dot" id="cm-dot"></span>
     <span id="cm-health-text">Checking...</span>
   </div>
+  {{ART_SOURCE}}
   <div class="cm-toolbar">
     <input type="search" id="cm-search" placeholder="Search charts..." autocomplete="off">
     <span class="cm-count" id="cm-count"></span>
@@ -39,12 +40,41 @@
     <thead><tr>
       <th>Chart</th><th>Latest</th>
       <th>App Version</th><th>Description</th>
+      <th>Created</th>
       <th></th>
     </tr></thead>
     <tbody id="cm-body">
-      <tr><td colspan="5" class="cm-loading">Loading...</td></tr>
+      <tr><td colspan="6" class="cm-loading">Loading...</td></tr>
     </tbody>
   </table>
+</div>
+<div id="cm-detail-modal" class="modal-overlay" onclick="if(event.target===this)cmCloseDetail()">
+  <div class="modal cm-detail-panel">
+    <button class="modal-close" onclick="cmCloseDetail()">&times;</button>
+    <div class="cm-detail-header">
+      <span class="cm-chart-icon" style="font-size:22px">&#x2B22;</span>
+      <div>
+        <h3 id="cm-detail-name" style="margin:0"></h3>
+        <span id="cm-detail-ver" class="cm-ver-badge" style="margin-left:0"></span>
+      </div>
+    </div>
+    <p id="cm-detail-desc" class="cm-detail-desc"></p>
+    <div class="cm-detail-grid" id="cm-detail-grid"></div>
+    <div class="cm-detail-install">
+      <label>Install</label>
+      <div class="cm-cmd-row">
+        <code id="cm-detail-install-cmd"></code>
+        <button class="cm-copy-btn" onclick="cmCopyInstall()" title="Copy">{{SVG_COPY}}</button>
+      </div>
+    </div>
+    <div class="cm-detail-install" style="margin-top:8px">
+      <label>Download URL</label>
+      <div class="cm-cmd-row">
+        <code id="cm-detail-dl-url"></code>
+        <button class="cm-copy-btn" onclick="cmCopyDlUrl()" title="Copy">{{SVG_COPY}}</button>
+      </div>
+    </div>
+  </div>
 </div>
 <div id="cm-delete-modal" class="modal-overlay" onclick="if(event.target===this)cmCloseDelete()">
   <div class="modal">

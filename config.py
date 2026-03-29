@@ -17,7 +17,7 @@ DATA_DIR = BASE_DIR / "data"
 
 PORT = int(os.environ.get("CFS_PORT", "8086"))
 DIRECTORY = os.environ.get("CFS_DIRECTORY", os.getcwd())
-DELETE_PASSWORD = os.environ.get("CFS_PASSWORD", "caffrey")
+DELETE_PASSWORD = os.environ.get("CFS_PASSWORD", "")
 
 # ── Logging ────────────────────────────────────────────────────────────
 

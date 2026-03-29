@@ -66,9 +66,15 @@
       })
       .then(function (d) {
         if (d.success) {
-          stat.textContent = "Saved";
-          stat.className = "chart-status success";
+          stat.textContent = "";
+          stat.className = "chart-status";
           window._toast && window._toast("Saved", "success");
+          var backBtn = document.querySelector(".cm-back-btn");
+          if (backBtn && backBtn.href) {
+            setTimeout(function () {
+              window.location.href = backBtn.href;
+            }, 600);
+          }
         } else {
           stat.textContent = d.error;
           stat.className = "chart-status error";

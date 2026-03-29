@@ -52,6 +52,8 @@ from config import (
     EXT_LANG_MAP,
     SYSTEM_DIRS,
     REMOTE_FILERS,
+    ARTIFACTORY_URL,
+    ARTIFACTORY_API_KEY,
 )
 from icons import get_icon, ICONS
 from svgs import (
@@ -992,6 +994,26 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         cm_version = _get_cm_version()
         cm_ver_html = html_module.escape(cm_version) if cm_version else ""
 
+        art_source = ""
+        if ARTIFACTORY_URL and ARTIFACTORY_API_KEY:
+            import re as _re
+
+            m = _re.search(r"repoKey=([^&]+)", ARTIFACTORY_URL)
+            repo_key = m.group(1) if m else ""
+            m2 = _re.search(r"https?://([^/]+)", ARTIFACTORY_URL)
+            art_host = m2.group(1) if m2 else ""
+            label_parts = []
+            if art_host:
+                label_parts.append(html_module.escape(art_host))
+            if repo_key:
+                label_parts.append(f"<strong>{html_module.escape(repo_key)}</strong>")
+            if label_parts:
+                art_source = (
+                    '<span class="cm-source-badge">'
+                    f'&#x2B22; Import source: {" / ".join(label_parts)}'
+                    "</span>"
+                )
+
         page_content = render_template(
             "charts_page.html",
             SVG_BACK=SVG_BACK,
@@ -1001,6 +1023,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             SVG_CM_UPLOAD=SVG_CM_UPLOAD,
             REPO_URL=repo_url,
             CM_VERSION=cm_ver_html,
+            ART_SOURCE=art_source,
         )
 
         import_modal = render_template(
@@ -1266,7 +1289,9 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         items = []
         for fav_path in favs:
             name = fav_path.rstrip("/").rsplit("/", 1)[-1] or fav_path
-            is_remote = fav_path.startswith("/__remote__/") or fav_path.startswith("http")
+            is_remote = fav_path.startswith("/__remote__/") or fav_path.startswith(
+                "http"
+            )
             is_dir = fav_path.endswith("/")
             icon = get_icon(name, is_dir=is_dir)
             display_name = name + ("/" if is_dir else "")
@@ -1274,7 +1299,11 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             badge = ""
             if is_remote:
                 if fav_path.startswith("/__remote__/"):
-                    filer_key = fav_path.strip("/").split("/")[1] if "/" in fav_path.strip("/") else ""
+                    filer_key = (
+                        fav_path.strip("/").split("/")[1]
+                        if "/" in fav_path.strip("/")
+                        else ""
+                    )
                     label = REMOTE_FILERS.get(filer_key, {}).get("label", filer_key)
                 else:
                     label = "Remote"
