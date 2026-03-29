@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# caffrey — Caffrey's File Server launcher
+#
+# Usage:
+#   caffrey              restart (default)
+#   caffrey start        start if not running
+#   caffrey stop         stop
+#   caffrey status       check if running
+#   caffrey logs         tail the log file
+#   caffrey test         run foreground (debug mode)
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+LOG_DIR="$SCRIPT_DIR/logs"
+LOG="$LOG_DIR/server.log"
+PIDFILE="$SCRIPT_DIR/server.pid"
+
+# Load .env if present
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+
+export CFS_DIRECTORY="${CFS_DIRECTORY:-$HOME/my-server}"
+export CFS_PORT="${CFS_PORT:-8086}"
+export CFS_LOG_DIR="$LOG_DIR"
+
+_stop() {
+    # Stop by PID file
+    if [ -f "$PIDFILE" ]; then
+        local pid
+        pid=$(cat "$PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "[*] Stopping running instance (PID $pid)..."
+            kill "$pid" 2>/dev/null || true
+            for _ in 1 2 3 4 5; do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 1
+            done
+            kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+            echo "[+] Stopped"
+        else
+            echo "[*] PID $pid already gone"
+        fi
+        rm -f "$PIDFILE"
+    fi
+
+    # Also kill anything on the configured port
+    lsof -ti:"$CFS_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    sleep 1
+}
+
+_start() {
+    if [ -f "$PIDFILE" ]; then
+        local pid
+        pid=$(cat "$PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "[!] Already running (PID $pid). Use 'caffrey restart' to restart."
+            return 0
+        fi
+        rm -f "$PIDFILE"
+    fi
+
+    mkdir -p "$LOG_DIR"
+    mkdir -p "$CFS_DIRECTORY"
+
+    echo "[+] Starting Caffrey's File Server..."
+
+    cd "$SCRIPT_DIR"
+    nohup python3 -u "$SCRIPT_DIR/server.py" >> "$LOG" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$PIDFILE"
+
+    sleep 2
+    if kill -0 "$pid" 2>/dev/null; then
+        local host
+        host=$(hostname -f 2>/dev/null || hostname)
+        echo "[+] Running (PID $pid)"
+        echo "    URL  : http://${host}:${CFS_PORT}"
+        echo "    Logs : $LOG"
+    else
+        echo "[!] Failed to start. Last 20 lines of log:"
+        tail -20 "$LOG"
+        exit 1
+    fi
+}
+
+_status() {
+    if [ -f "$PIDFILE" ]; then
+        local pid
+        pid=$(cat "$PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            local host
+            host=$(hostname -f 2>/dev/null || hostname)
+            echo "[+] Running (PID $pid)"
+            echo "    URL  : http://${host}:${CFS_PORT}"
+            echo "    Logs : $LOG"
+        else
+            echo "[-] Not running (stale PID file, cleaning up)"
+            rm -f "$PIDFILE"
+        fi
+    else
+        echo "[-] Not running"
+    fi
+}
+
+_test() {
+    echo "[test] Starting foreground server on port $CFS_PORT..."
+    echo "[test] Press Ctrl+C to stop"
+    echo ""
+    cd "$SCRIPT_DIR"
+    export CFS_LOG_LEVEL=DEBUG
+    python3 -u "$SCRIPT_DIR/server.py"
+}
+
+case "${1:-restart}" in
+    stop)               _stop ;;
+    start)              _start ;;
+    status)             _status ;;
+    test)               _test ;;
+    logs|log)           tail -f "$LOG" ;;
+    deploy|restart|"")  _stop; _start ;;
+    *)
+        echo "Usage: caffrey [start|stop|restart|status|logs|test]"
+        exit 1
+        ;;
+esac

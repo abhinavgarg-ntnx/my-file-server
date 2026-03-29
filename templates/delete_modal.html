@@ -1,0 +1,11 @@
+<div id="delete-modal" class="modal-overlay" onclick="if(event.target===this)closeDeleteModal()">
+  <div class="modal">
+    <h3>Confirm Delete</h3>
+    <p>You are about to delete: <strong id="delete-filename"></strong></p>
+    <input type="password" id="delete-password" placeholder="Enter password to confirm">
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="closeDeleteModal()">Cancel</button>
+      <button class="modal-btn danger" onclick="confirmDelete()">Delete</button>
+    </div>
+  </div>
+</div>

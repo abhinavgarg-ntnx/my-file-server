@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{TITLE}}</title>
+    <script>
+    (function(){var t=localStorage.getItem('cfs-theme');
+    if(t==='light')document.documentElement.classList.add('light');})();
+    </script>
+    <link rel="stylesheet" href="/__static__/css/style.css">
+    {{EXTRA_HEAD}}
+</head>
+<body>
+    {{HEADER}}
+    <div class="container">
+        {{CONTENT}}
+    </div>
+    {{MODALS}}
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/__static__/js/app.js"></script>
+    {{EXTRA_SCRIPTS}}
+</body>
+</html>

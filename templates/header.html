@@ -1,0 +1,37 @@
+<div class="header">
+  <div class="header-left">
+    <a href="/" style="text-decoration:none;color:inherit;display:flex;align-items:center;gap:10px;">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+        <defs>
+          <linearGradient id="g1" x1="6" y1="5" x2="18" y2="14" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#818cf8"/><stop offset="1" stop-color="#6366f1"/>
+          </linearGradient>
+          <linearGradient id="g2" x1="6" y1="21" x2="18" y2="12" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#38bdf8"/><stop offset="1" stop-color="#6366f1"/>
+          </linearGradient>
+        </defs>
+        <polygon points="12,1.5 20.2,5.5 22,14 16.5,21.5 7.5,21.5 2,14 3.8,5.5"
+                 stroke="#475569" stroke-width="1.2" fill="none" opacity="0.5"/>
+        <path d="M6 6.5 L18 6.5 L12 12 Z" fill="url(#g1)"/>
+        <path d="M7.5 19.5 L16.5 19.5 L12 13.5 Z" fill="url(#g2)"/>
+        <circle cx="12" cy="8.5" r="1.5" fill="#ffffff" opacity="0.9"/>
+      </svg>
+      <div>
+        <h1>Caffrey's Treasure</h1>
+        <div class="subtitle">personal file server</div>
+      </div>
+    </a>
+  </div>
+  <div class="header-right">
+    <a href="/__charts__" class="hdr-btn">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/></svg>
+      Charts
+    </a>
+    {{UPLOAD_BUTTON}}
+    <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme">
+      <svg id="theme-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/>
+      </svg>
+    </button>
+  </div>
+</div>
