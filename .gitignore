@@ -13,3 +13,4 @@ charts/
 *~
 logs/
 server.pid
+chartmuseum.pid

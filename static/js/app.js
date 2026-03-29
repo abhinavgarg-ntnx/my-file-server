@@ -192,7 +192,7 @@
 
   /* ── Chart Download ──────────────────────────────────────────── */
 
-  window.downloadChart = function () {
+  window.downloadChart = function (push) {
     var nameEl = document.getElementById("chart-name");
     var verEl = document.getElementById("chart-version");
     var stat = document.getElementById("chart-status");
@@ -204,7 +204,7 @@
       return;
     }
     if (stat) {
-      stat.textContent = "Downloading and extracting...";
+      stat.textContent = push ? "Importing..." : "Downloading...";
       stat.className = "chart-status";
     }
     fetch("/__api__/chart-download", {
@@ -213,6 +213,7 @@
       body: JSON.stringify({
         name: nameEl.value.trim(),
         version: verEl.value.trim(),
+        push: push !== false,
       }),
     })
       .then(function (r) {
@@ -220,16 +221,25 @@
       })
       .then(function (d) {
         if (d.success) {
+          var msg =
+            "Downloaded to " +
+            '<a href="' +
+            d.path +
+            '" style="color:inherit;' +
+            'text-decoration:underline">' +
+            d.path +
+            "</a>";
+          if (d.chartmuseum) {
+            msg += " &bull; Pushed to ChartMuseum";
+            toast("Imported & pushed to ChartMuseum!", "success");
+            if (typeof window._cmRefresh === "function") window._cmRefresh();
+          } else {
+            toast("Chart downloaded!", "success");
+          }
           if (stat) {
-            stat.innerHTML =
-              'Chart downloaded! <a href="' +
-              d.path +
-              '" style="color:var(--accent);text-decoration:underline;font-weight:600">' +
-              "Open " + d.path +
-              "</a>";
+            stat.innerHTML = msg;
             stat.className = "chart-status success";
           }
-          toast("Chart downloaded!", "success");
         } else {
           if (stat) {
             stat.textContent = "Error: " + d.error;
@@ -244,6 +254,60 @@
           stat.className = "chart-status error";
         }
       });
+  };
+
+  /* ── New Folder / New File ───────────────────────────────────── */
+
+  window.promptNewFolder = function (dir) {
+    var name = prompt("New folder name:");
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    if (/[\/\\]/.test(name)) {
+      toast("Folder name cannot contain slashes", "error");
+      return;
+    }
+    var path = (dir === "/" ? "/" : dir) + name;
+    fetch("/__api__/mkdir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.success) {
+          toast("Folder created", "success");
+          setTimeout(function () { location.reload(); }, 400);
+        } else {
+          toast(d.error || "Failed", "error");
+        }
+      })
+      .catch(function () { toast("Network error", "error"); });
+  };
+
+  window.promptNewFile = function (dir) {
+    var name = prompt("New file name (e.g. config.yaml):");
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    if (/[\/\\]/.test(name)) {
+      toast("File name cannot contain slashes", "error");
+      return;
+    }
+    var path = (dir === "/" ? "/" : dir) + name;
+    fetch("/__api__/newfile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path, content: "" }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.success) {
+          toast("File created", "success");
+          location.href = "/__editor__?file=" + encodeURIComponent(path);
+        } else {
+          toast(d.error || "Failed", "error");
+        }
+      })
+      .catch(function () { toast("Network error", "error"); });
   };
 
   /* ── JSON Viewer Enhancement ─────────────────────────────────── */

@@ -26,6 +26,11 @@ LOG_MAX_MB = int(os.environ.get("CFS_LOG_MAX_MB", "50"))
 LOG_BACKUP_COUNT = int(os.environ.get("CFS_LOG_BACKUP_COUNT", "14"))
 LOG_ROTATE_WHEN = os.environ.get("CFS_LOG_ROTATE_WHEN", "midnight")
 
+# ── ChartMuseum ───────────────────────────────────────────────────────
+
+CM_PORT = int(os.environ.get("CFS_CM_PORT", "8089"))
+CM_STORAGE_DIR = os.environ.get("CFS_CM_STORAGE", "")
+
 # ── Artifactory (chart downloads) ─────────────────────────────────────
 
 ARTIFACTORY_URL = os.environ.get(

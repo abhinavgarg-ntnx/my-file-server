@@ -567,7 +567,7 @@ a:hover {
     white-space: pre-wrap;
     word-break: break-all;
 }
-/* ── Charts page ───────────────────────────────────────────────── */
+/* ── Charts / Forms ───────────────────────────────────────────── */
 .chart-form {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -628,6 +628,364 @@ a:hover {
 .chart-status.success {
     color: var(--success);
 }
+/* ── ChartMuseum Dashboard ────────────────────────────────────── */
+.cm-topbar {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px 22px;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    box-shadow: var(--shadow-sm);
+    border-left: 3px solid var(--accent);
+}
+.cm-topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.cm-back-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    transition: all var(--transition);
+    flex-shrink: 0;
+}
+.cm-back-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+.cm-back-btn svg {
+    width: 16px;
+    height: 16px;
+}
+.cm-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+.cm-subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 1px;
+}
+.cm-repo-cmd {
+    text-align: right;
+    flex-shrink: 0;
+}
+.cm-repo-cmd label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-muted);
+    font-weight: 600;
+    display: block;
+    margin-bottom: 5px;
+}
+.cm-cmd-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg-code);
+}
+.cm-cmd-row code {
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    white-space: nowrap;
+    background: none;
+    border: none;
+}
+.cm-copy-btn {
+    padding: 8px 12px;
+    border: none;
+    border-left: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition);
+    display: flex;
+    align-items: center;
+}
+.cm-copy-btn:hover {
+    background: var(--accent);
+    color: #fff;
+}
+.cm-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.cm-health {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.cm-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+    animation: pulse 2s infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+.cm-dot.up {
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+    animation: none;
+}
+.cm-dot.down {
+    background: var(--danger);
+    box-shadow: 0 0 6px var(--danger);
+    animation: none;
+}
+.cm-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.cm-toolbar input[type="search"] {
+    padding: 7px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+    width: 260px;
+    transition: border-color var(--transition);
+}
+.cm-toolbar input[type="search"]:focus {
+    border-color: var(--accent);
+}
+.cm-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.cm-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+    margin-bottom: 16px;
+}
+.cm-card-title {
+    font-size: 14px;
+    font-weight: 600;
+    padding: 16px 20px 0;
+    margin-bottom: 12px;
+}
+.cm-card-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 0 20px;
+    margin-bottom: 12px;
+}
+.cm-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.cm-table th {
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-muted);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-hover);
+}
+.cm-table th:last-child {
+    text-align: right;
+}
+.cm-table td {
+    padding: 11px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: middle;
+}
+.cm-table tbody tr:last-child td {
+    border-bottom: none;
+}
+.cm-table tbody tr {
+    transition: background var(--transition);
+}
+.cm-table tbody tr:hover td {
+    background: var(--bg-hover);
+}
+.cm-name {
+    font-weight: 600;
+    white-space: nowrap;
+}
+.cm-chart-icon {
+    color: var(--accent);
+    font-size: 10px;
+    margin-right: 2px;
+}
+.cm-desc {
+    color: var(--text-secondary);
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cm-actions {
+    display: flex;
+    gap: 2px;
+    justify-content: flex-end;
+}
+.cm-loading {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 36px 16px !important;
+    font-size: 13px;
+}
+.cm-err {
+    color: var(--danger);
+}
+.cm-ver-badge {
+    display: inline-block;
+    background: var(--accent-subtle);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+.cm-ver-header td {
+    background: var(--accent-subtle) !important;
+    padding: 12px 16px !important;
+    font-size: 13px;
+}
+.cm-close-ver {
+    margin-left: 12px;
+    padding: 4px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+.cm-close-ver:hover {
+    background: var(--accent);
+    color: #fff;
+}
+/* ── Chart upload zone ───────────────────────────────────────── */
+.cm-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 24px 16px;
+    margin: 0 16px 16px;
+    text-align: center;
+    transition: all var(--transition);
+    cursor: pointer;
+    position: relative;
+}
+.cm-upload-zone.dragover {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+}
+.cm-upload-icon {
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+.cm-upload-zone p {
+    color: var(--text-secondary);
+    margin-top: 4px;
+    font-size: 12px;
+}
+.cm-upload-zone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+.cm-note-warn {
+    color: var(--warning);
+    font-size: 12px;
+    padding: 0 20px;
+    margin-bottom: 6px;
+}
+/* ── Dir toolbar (new folder / new file) ──────────────────────── */
+.dir-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+/* ── Editor ────────────────────────────────────────────────────── */
+.editor-topbar {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 22px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: var(--shadow-sm);
+    border-left: 3px solid var(--accent);
+}
+.editor-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.editor-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+.editor-textarea {
+    width: 100%;
+    min-height: calc(100vh - 250px);
+    padding: 18px 20px;
+    background: var(--bg-code);
+    color: var(--text-primary);
+    border: none;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    resize: vertical;
+    tab-size: 2;
+    outline: none;
+}
 /* ── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .header {
@@ -644,5 +1002,12 @@ a:hover {
    }
     .form-row {
         flex-direction: column;
+   }
+    .cm-topbar {
+        flex-direction: column;
+        align-items: flex-start;
+   }
+    .cm-repo-cmd {
+        text-align: left;
    }
 }

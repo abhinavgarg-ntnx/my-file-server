@@ -13,7 +13,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
 LOG="$LOG_DIR/server.log"
+CM_LOG="$LOG_DIR/chartmuseum.log"
 PIDFILE="$SCRIPT_DIR/server.pid"
+CM_PIDFILE="$SCRIPT_DIR/chartmuseum.pid"
 
 # Load .env if present
 if [ -f "$SCRIPT_DIR/.env" ]; then
@@ -24,49 +26,92 @@ fi
 
 export CFS_DIRECTORY="${CFS_DIRECTORY:-$HOME/my-server}"
 export CFS_PORT="${CFS_PORT:-8086}"
+export CFS_CM_PORT="${CFS_CM_PORT:-8089}"
 export CFS_LOG_DIR="$LOG_DIR"
 
-_stop() {
-    # Stop by PID file
-    if [ -f "$PIDFILE" ]; then
+CM_STORAGE="${CFS_CM_STORAGE:-$CFS_DIRECTORY/helm-charts}"
+
+_kill_pid() {
+    local pidfile="$1" label="$2"
+    if [ -f "$pidfile" ]; then
         local pid
-        pid=$(cat "$PIDFILE")
+        pid=$(cat "$pidfile")
         if kill -0 "$pid" 2>/dev/null; then
-            echo "[*] Stopping running instance (PID $pid)..."
+            echo "[*] Stopping $label (PID $pid)..."
             kill "$pid" 2>/dev/null || true
             for _ in 1 2 3 4 5; do
                 kill -0 "$pid" 2>/dev/null || break
                 sleep 1
             done
             kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
-            echo "[+] Stopped"
+            echo "[+] $label stopped"
         else
-            echo "[*] PID $pid already gone"
+            echo "[*] $label PID $pid already gone"
         fi
-        rm -f "$PIDFILE"
+        rm -f "$pidfile"
+    fi
+}
+
+_stop() {
+    _kill_pid "$CM_PIDFILE" "ChartMuseum"
+    _kill_pid "$PIDFILE" "File Server"
+    lsof -ti:"$CFS_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    lsof -ti:"$CFS_CM_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    sleep 1
+}
+
+_cm_start() {
+    if ! command -v chartmuseum &>/dev/null; then
+        echo "[!] chartmuseum binary not found — skipping"
+        return 0
+    fi
+    if [ -f "$CM_PIDFILE" ]; then
+        local pid; pid=$(cat "$CM_PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "[=] ChartMuseum already running (PID $pid)"
+            return 0
+        fi
+        rm -f "$CM_PIDFILE"
     fi
 
-    # Also kill anything on the configured port
-    lsof -ti:"$CFS_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    mkdir -p "$CM_STORAGE" "$LOG_DIR"
+
+    nohup chartmuseum \
+        --storage local \
+        --storage-local-rootdir "$CM_STORAGE" \
+        --port "$CFS_CM_PORT" \
+        --depth 0 \
+        >> "$CM_LOG" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$CM_PIDFILE"
+
     sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+        local host; host=$(hostname -f 2>/dev/null || hostname)
+        echo "[+] ChartMuseum running (PID $pid)"
+        echo "    Repo : http://${host}:${CFS_CM_PORT}"
+        echo "    Add  : helm repo add caffrey http://${host}:${CFS_CM_PORT}"
+    else
+        echo "[!] ChartMuseum failed to start. Check $CM_LOG"
+    fi
 }
 
 _start() {
     if [ -f "$PIDFILE" ]; then
-        local pid
-        pid=$(cat "$PIDFILE")
+        local pid; pid=$(cat "$PIDFILE")
         if kill -0 "$pid" 2>/dev/null; then
-            echo "[!] Already running (PID $pid). Use 'caffrey restart' to restart."
+            echo "[!] File Server already running (PID $pid). Use 'caffrey restart'."
+            _cm_start
             return 0
         fi
         rm -f "$PIDFILE"
     fi
 
-    mkdir -p "$LOG_DIR"
-    mkdir -p "$CFS_DIRECTORY"
+    mkdir -p "$LOG_DIR" "$CFS_DIRECTORY"
+
+    _cm_start
 
     echo "[+] Starting Caffrey's File Server..."
-
     cd "$SCRIPT_DIR"
     nohup python3 -u "$SCRIPT_DIR/server.py" >> "$LOG" 2>&1 &
     local pid=$!
@@ -74,39 +119,47 @@ _start() {
 
     sleep 2
     if kill -0 "$pid" 2>/dev/null; then
-        local host
-        host=$(hostname -f 2>/dev/null || hostname)
-        echo "[+] Running (PID $pid)"
+        local host; host=$(hostname -f 2>/dev/null || hostname)
+        echo "[+] File Server running (PID $pid)"
         echo "    URL  : http://${host}:${CFS_PORT}"
         echo "    Logs : $LOG"
     else
-        echo "[!] Failed to start. Last 20 lines of log:"
+        echo "[!] File Server failed to start. Last 20 lines:"
         tail -20 "$LOG"
         exit 1
     fi
 }
 
 _status() {
+    local host; host=$(hostname -f 2>/dev/null || hostname)
+
     if [ -f "$PIDFILE" ]; then
-        local pid
-        pid=$(cat "$PIDFILE")
+        local pid; pid=$(cat "$PIDFILE")
         if kill -0 "$pid" 2>/dev/null; then
-            local host
-            host=$(hostname -f 2>/dev/null || hostname)
-            echo "[+] Running (PID $pid)"
-            echo "    URL  : http://${host}:${CFS_PORT}"
-            echo "    Logs : $LOG"
+            echo "[+] File Server  running  (PID $pid)  http://${host}:${CFS_PORT}"
         else
-            echo "[-] Not running (stale PID file, cleaning up)"
+            echo "[-] File Server  not running (stale PID)"
             rm -f "$PIDFILE"
         fi
     else
-        echo "[-] Not running"
+        echo "[-] File Server  not running"
+    fi
+
+    if [ -f "$CM_PIDFILE" ]; then
+        local pid; pid=$(cat "$CM_PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "[+] ChartMuseum  running  (PID $pid)  http://${host}:${CFS_CM_PORT}"
+        else
+            echo "[-] ChartMuseum  not running (stale PID)"
+            rm -f "$CM_PIDFILE"
+        fi
+    else
+        echo "[-] ChartMuseum  not running"
     fi
 }
 
 _test() {
-    echo "[test] Starting foreground server on port $CFS_PORT..."
+    echo "[test] Starting foreground on port $CFS_PORT..."
     echo "[test] Press Ctrl+C to stop"
     echo ""
     cd "$SCRIPT_DIR"
@@ -120,9 +173,10 @@ case "${1:-restart}" in
     status)             _status ;;
     test)               _test ;;
     logs|log)           tail -f "$LOG" ;;
+    cm-logs)            tail -f "$CM_LOG" ;;
     deploy|restart|"")  _stop; _start ;;
     *)
-        echo "Usage: caffrey [start|stop|restart|status|logs|test]"
+        echo "Usage: caffrey [start|stop|restart|status|logs|cm-logs|test]"
         exit 1
         ;;
 esac
