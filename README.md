@@ -70,8 +70,28 @@ A modern, feature-rich HTTP file server built in Python with a polished dark/lig
 git clone https://github.com/abhinavgarg-ntnx/my-file-server.git ~/my-file-server
 cd ~/my-file-server
 pip install -r requirements.txt   # optional: only needed for Artifactory chart downloads
+```
 
-# One command:
+### Configure your credentials
+
+Create a `.env` file in the project root (it is git-ignored):
+
+```bash
+# Required — password used for file/folder deletion via the UI
+CFS_PASSWORD=your-secret-password
+
+# Optional — only needed for importing Helm charts from Artifactory
+CFS_ARTIFACTORY_KEY=your-jfrog-api-key
+```
+
+> **Important:** Never commit real credentials. The `.env` file is listed in
+> `.gitignore` and the launcher (`caffrey`) loads it automatically at startup.
+> If `CFS_PASSWORD` is not set, it defaults to `caffrey`.
+> If `CFS_ARTIFACTORY_KEY` is not set, Artifactory chart imports will be disabled.
+
+### Start the server
+
+```bash
 ./caffrey
 ```
 
@@ -98,20 +118,21 @@ alias caffrey="~/my-file-server/caffrey"
 
 ## Environment Variables
 
-| Variable               | Default       | Description                          |
-| ---------------------- | ------------- | ------------------------------------ |
-| `CFS_PORT`             | `8086`        | Server port                          |
-| `CFS_DIRECTORY`        | `~/my-server` | Directory to serve                   |
-| `CFS_PASSWORD`         | `caffrey`     | Password for file deletion           |
-| `CFS_CM_PORT`          | `8089`        | ChartMuseum port                     |
-| `CFS_LOG_DIR`          | `./logs`      | Log file directory                   |
-| `CFS_LOG_LEVEL`        | `INFO`        | Logging level (DEBUG, INFO, WARNING) |
-| `CFS_LOG_MAX_MB`       | `50`          | Max log file size before rotation    |
-| `CFS_LOG_BACKUP_COUNT` | `14`          | Number of rotated logs to keep       |
-| `CFS_ARTIFACTORY_URL`  | _(internal)_  | Artifactory download URL template    |
-| `CFS_ARTIFACTORY_KEY`  | _(internal)_  | Artifactory API key                  |
+| Variable               | Default       | Description                                       |
+| ---------------------- | ------------- | ------------------------------------------------- |
+| `CFS_PORT`             | `8086`        | Server port                                       |
+| `CFS_DIRECTORY`        | `~/my-server` | Root directory to serve                            |
+| `CFS_PASSWORD`         | `caffrey`     | **Set your own** — password for delete actions     |
+| `CFS_CM_PORT`          | `8089`        | ChartMuseum port                                  |
+| `CFS_LOG_DIR`          | `./logs`      | Log file directory                                |
+| `CFS_LOG_LEVEL`        | `INFO`        | Logging level (DEBUG, INFO, WARNING)              |
+| `CFS_LOG_MAX_MB`       | `50`          | Max log file size before rotation                 |
+| `CFS_LOG_BACKUP_COUNT` | `14`          | Number of rotated logs to keep                    |
+| `CFS_ARTIFACTORY_URL`  | _(none)_      | Artifactory download URL template                 |
+| `CFS_ARTIFACTORY_KEY`  | _(none)_      | **Set your own** — JFrog API key for chart imports |
 
-Create a `.env` file in the project root — the launcher loads it automatically.
+All variables can be set in a `.env` file in the project root — the launcher loads it automatically.
+Never commit `.env` to version control.
 
 ## Adding Remote Filers
 

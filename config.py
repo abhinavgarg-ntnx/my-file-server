@@ -39,10 +39,7 @@ ARTIFACTORY_URL = os.environ.get(
     "https://artifactory.dyn.ntnxdpro.com/ui/api/v1/download"
     "?repoKey=canaveral-helm&path={name}%2F{name}-{version}.tgz",
 )
-ARTIFACTORY_API_KEY = os.environ.get(
-    "CFS_ARTIFACTORY_KEY",
-    "REPLACE_WITH_YOUR_API_KEY",
-)
+ARTIFACTORY_API_KEY = os.environ.get("CFS_ARTIFACTORY_KEY", "")
 
 # ── Hostname (auto-detected) ──────────────────────────────────────────
 
