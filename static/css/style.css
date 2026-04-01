@@ -148,6 +148,18 @@ a:hover {
     padding: 7px 9px;
     gap: 0;
 }
+.github-btn svg {
+    width: 18px;
+    height: 18px;
+}
+.github-btn:hover {
+    color: #fff;
+    background: #333;
+}
+html.light .github-btn:hover {
+    background: #24292f;
+    color: #fff;
+}
 /* ── Filer dropdown ──────────────────────────────────────────── */
 .filer-dropdown { position: relative; }
 .filer-menu {

@@ -78,6 +78,7 @@ from svgs import (
     SVG_STAR_FILLED,
     SVG_SEARCH,
     SVG_MOVE,
+    SVG_GITHUB,
 )
 from charts import download_and_extract_chart, HAS_REQUESTS
 
@@ -319,6 +320,7 @@ def _render_header(show_charts=True):
         CHARTS_BUTTON=charts_btn,
         FILERS_BUTTON=_FILERS_DROPDOWN,
         FAVORITES_BUTTON=_FAVORITES_BTN_HTML,
+        SVG_GITHUB=SVG_GITHUB,
     )
 
 
