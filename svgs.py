@@ -207,3 +207,12 @@ SVG_SEARCH = (
     ' d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196'
     ' a7.5 7.5 0 0010.607 10.607z"/></svg>'
 )
+
+SVG_MOVE = (
+    '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">'
+    '<path stroke-linecap="round" stroke-linejoin="round"'
+    ' d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.5'
+    "A1.125 1.125 0 014 20.625V7.875c0-.621.504-1.125 1.125-1.125"
+    "H8.25m8.25 3.75l3.75-3.75m0 0l-3.75-3.75M20.25 6.75H11.25"
+    '"/></svg>'
+)

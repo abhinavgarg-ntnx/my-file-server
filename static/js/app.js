@@ -5,6 +5,14 @@
 (function () {
   "use strict";
 
+  /* ── Shared helpers ────────────────────────────────────────────── */
+
+  function escHtml(s) {
+    var d = document.createElement("div");
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
+  }
+
   /* ── Theme ───────────────────────────────────────────────────── */
 
   var THEME_KEY = "cfs-theme";
@@ -183,7 +191,9 @@
       var html = "";
       for (var i = 0; i < data.results.length; i++) {
         var r = data.results[i];
-        var href = r.is_dir ? r.path : "/__viewer__?file=" + encodeURIComponent(r.path);
+        var href = r.is_dir
+          ? r.path
+          : "/__viewer__?file=" + encodeURIComponent(r.path);
         var icon = r.is_dir
           ? '<svg viewBox="0 0 24 24" fill="#f59e0b" fill-opacity="0.15" stroke="#f59e0b" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>'
           : '<svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5"><path d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>';
@@ -201,25 +211,33 @@
         }
         var dir = r.path.replace(/[^/]*\/?$/, "");
         html +=
-          '<a class="sr-item" href="' + escAttr(href) + '">' +
+          '<a class="sr-item" href="' +
+          escAttr(href) +
+          '">' +
           icon +
-          "<span>" + name + "</span>" +
-          '<span class="sr-path">' + escHtml(dir) + "</span></a>";
+          "<span>" +
+          name +
+          "</span>" +
+          '<span class="sr-path">' +
+          escHtml(dir) +
+          "</span></a>";
       }
       if (data.truncated) {
-        html += '<div class="sr-info">Showing first ' + data.results.length + " results…</div>";
+        html +=
+          '<div class="sr-info">Showing first ' +
+          data.results.length +
+          " results…</div>";
       }
       resultsEl.innerHTML = html;
       resultsEl.classList.add("open");
     }
 
-    function escHtml(s) {
-      var d = document.createElement("div");
-      d.appendChild(document.createTextNode(s));
-      return d.innerHTML;
-    }
     function escAttr(s) {
-      return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;");
+      return s
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
+        .replace(/</g, "&lt;");
     }
 
     function doSearch(q) {
@@ -227,11 +245,18 @@
       abortCtrl = new AbortController();
       var dir = input.dataset.dir || "/";
       fetch(
-        "/__api__/search?q=" + encodeURIComponent(q) + "&dir=" + encodeURIComponent(dir),
-        { signal: abortCtrl.signal }
+        "/__api__/search?q=" +
+          encodeURIComponent(q) +
+          "&dir=" +
+          encodeURIComponent(dir),
+        { signal: abortCtrl.signal },
       )
-        .then(function (r) { return r.json(); })
-        .then(function (d) { renderResults(d, q); })
+        .then(function (r) {
+          return r.json();
+        })
+        .then(function (d) {
+          renderResults(d, q);
+        })
         .catch(function () {});
     }
 
@@ -244,8 +269,9 @@
         return;
       }
       filterLocal(q);
+      var isRemote = input.dataset.remote === "1";
       clearTimeout(debounceTimer);
-      if (q.length >= 2) {
+      if (!isRemote && q.length >= 2) {
         debounceTimer = setTimeout(function () {
           doSearch(q);
         }, 350);
@@ -964,5 +990,188 @@
       var btn = document.getElementById("input-modal-ok");
       if (btn) btn.click();
     }
+    var moveModal = document.getElementById("move-modal");
+    if (
+      e.key === "Escape" &&
+      moveModal &&
+      moveModal.classList.contains("open")
+    ) {
+      window.closeMoveModal && window.closeMoveModal();
+    }
   });
+
+  /* ── Move Modal ──────────────────────────────────────────────── */
+
+  var _moveSrc = "";
+  var _moveName = "";
+  var _moveDest = "/";
+  var SVG_FOLDER_SM =
+    '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">' +
+    '<path stroke-linecap="round" stroke-linejoin="round" ' +
+    'd="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75' +
+    "m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6" +
+    "v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00" +
+    '-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>';
+
+  window.showMoveModal = function (path, name) {
+    _moveSrc = path;
+    _moveName = name;
+    var srcParent = path.substring(0, path.lastIndexOf("/")) || "/";
+    _moveDest = srcParent;
+    var label = document.getElementById("move-item-name");
+    if (label) label.textContent = name;
+    var modal = document.getElementById("move-modal");
+    if (modal) modal.classList.add("open");
+    loadMoveDirs("/");
+  };
+
+  window.closeMoveModal = function () {
+    var modal = document.getElementById("move-modal");
+    if (modal) modal.classList.remove("open");
+  };
+
+  function loadMoveDirs(dir) {
+    _moveDest = dir;
+    updateMoveBreadcrumb(dir);
+    updateMoveTarget(dir);
+    var list = document.getElementById("move-dir-list");
+    if (!list) return;
+    list.innerHTML = '<div class="move-empty">Loading...</div>';
+
+    fetch("/__api__/list-dirs?dir=" + encodeURIComponent(dir))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        if (!d.dirs || !d.dirs.length) {
+          list.innerHTML = '<div class="move-empty">No subdirectories</div>';
+          return;
+        }
+        var html = "";
+        var srcBase = _moveSrc.replace(/\/$/, "");
+        d.dirs.forEach(function (item) {
+          if (item.path === srcBase || item.path === srcBase + "/") return;
+          var safePath = item.path.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+          html +=
+            '<div class="move-dir-item" onclick="moveNavigate(\'' +
+            safePath +
+            "')\">" +
+            SVG_FOLDER_SM +
+            " " +
+            escHtml(item.name) +
+            "</div>";
+        });
+        list.innerHTML =
+          html || '<div class="move-empty">No subdirectories</div>';
+      })
+      .catch(function (err) {
+        list.innerHTML =
+          '<div class="move-empty">Error loading directories</div>';
+      });
+  }
+
+  window.moveNavigate = function (dir) {
+    loadMoveDirs(dir);
+  };
+
+  function updateMoveBreadcrumb(dir) {
+    var bc = document.getElementById("move-breadcrumb");
+    if (!bc) return;
+    var parts = dir.split("/").filter(Boolean);
+    var html = "<a onclick=\"loadMoveDirs('/')\">/</a>";
+    var built = "";
+    parts.forEach(function (p, i) {
+      built += "/" + p;
+      var path = built;
+      html +=
+        " <span>/</span> <a onclick=\"loadMoveDirs('" +
+        path.replace(/'/g, "\\'") +
+        "')\">" +
+        escHtml(p) +
+        "</a>";
+    });
+    bc.innerHTML = html;
+  }
+
+  function updateMoveTarget(dir) {
+    var el = document.getElementById("move-target");
+    if (el)
+      el.innerHTML = "Move to: <strong>" + escHtml(dir || "/") + "</strong>";
+  }
+
+  window.confirmMove = function () {
+    if (!_moveSrc) return;
+    fetch("/__api__/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ src: _moveSrc, dest: _moveDest }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (d) {
+        if (d.success) {
+          toast("Moved successfully", "success");
+          window.closeMoveModal();
+          setTimeout(function () {
+            location.reload();
+          }, 400);
+        } else {
+          toast(d.error || "Move failed", "error");
+        }
+      })
+      .catch(function () {
+        toast("Network error", "error");
+      });
+  };
+
+  /* ── Disk Usage Widget ───────────────────────────────────────── */
+
+  (function () {
+    var bar = document.getElementById("disk-bar");
+    if (!bar) return;
+    fetch("/__api__/disk-usage")
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (d) {
+        if (d.error) return;
+        document.getElementById("disk-pct").textContent = d.pct + "%";
+        document.getElementById("disk-used").textContent = d.used_h;
+        document.getElementById("disk-total").textContent = d.total_h;
+        bar.style.width = Math.min(d.pct, 100) + "%";
+        if (d.pct > 90) bar.classList.add("disk-bar-danger");
+        else if (d.pct > 75) bar.classList.add("disk-bar-warn");
+        var topEl = document.getElementById("disk-top");
+        if (topEl && d.top_dirs && d.top_dirs.length) {
+          var html = "";
+          d.top_dirs.slice(0, 5).forEach(function (dir) {
+            var s = dir.size;
+            var label =
+              s > 1073741824
+                ? (s / 1073741824).toFixed(1) + " GB"
+                : s > 1048576
+                  ? (s / 1048576).toFixed(1) + " MB"
+                  : s > 1024
+                    ? (s / 1024).toFixed(1) + " KB"
+                    : s + " B";
+            var pct = d.used ? ((dir.size / d.used) * 100).toFixed(1) : 0;
+            html +=
+              '<div class="disk-top-item">' +
+              '<span class="disk-top-name">' +
+              escHtml(dir.name) +
+              "/</span>" +
+              '<span class="disk-top-size">' +
+              label +
+              "</span>" +
+              '<div class="disk-top-bar"><div class="disk-top-fill" style="width:' +
+              pct +
+              '%"></div></div>' +
+              "</div>";
+          });
+          topEl.innerHTML = html;
+        }
+      });
+  })();
 })();

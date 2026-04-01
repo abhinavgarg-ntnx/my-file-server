@@ -372,13 +372,13 @@ a:hover {
 .ft-actions {
     white-space: nowrap;
     padding-left: 8px !important;
-    width: 200px;
+    width: 304px;
 }
 .file-actions {
     display: flex;
-    gap: 4px;
+    gap: 2px;
     justify-content: flex-end;
-    min-width: 176px;
+    min-width: 276px;
 }
 .act-btn {
     padding: 5px;
@@ -410,6 +410,10 @@ a:hover {
 .act-btn.del-btn:hover {
     color: var(--danger);
     background: var(--danger-subtle);
+}
+.act-btn.move-btn:hover {
+    color: var(--accent);
+    background: rgba(59,130,246,0.1);
 }
 .act-btn.fav-btn { color: var(--text-muted); }
 .act-btn.fav-btn:hover, .act-btn.fav-btn.fav-active { color: #f59e0b; }
@@ -543,6 +547,146 @@ a:hover {
 }
 .modal-btn.danger:hover {
     opacity: 0.85;
+}
+/* ── Move modal ────────────────────────────────────────────────── */
+.move-modal {
+    width: 500px;
+    max-width: 92vw;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+.move-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+.move-breadcrumb a {
+    color: var(--accent);
+    text-decoration: none;
+    cursor: pointer;
+}
+.move-breadcrumb a:hover { text-decoration: underline; }
+.move-breadcrumb span { color: var(--text-muted); }
+.move-dir-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-height: 320px;
+    min-height: 120px;
+}
+.move-dir-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background var(--transition);
+}
+.move-dir-item:last-child { border-bottom: none; }
+.move-dir-item:hover { background: var(--bg-hover); }
+.move-dir-item.selected {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    font-weight: 600;
+}
+.move-dir-item svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+.move-dir-item.selected svg { color: var(--accent); }
+.move-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+.move-target {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: var(--bg-code);
+    border-radius: var(--radius);
+    word-break: break-all;
+}
+.move-target strong { color: var(--text-primary); }
+/* ── Disk usage widget ─────────────────────────────────────────── */
+.disk-widget {
+    margin-top: 20px;
+    padding: 16px 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+.disk-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.disk-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.disk-info {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.disk-track {
+    height: 8px;
+    background: var(--bg-hover);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+.disk-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+    width: 0;
+    transition: width 0.6s ease;
+}
+.disk-bar-warn { background: var(--warning); }
+.disk-bar-danger { background: var(--danger); }
+.disk-top {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+}
+.disk-top-item {
+    font-size: 12px;
+}
+.disk-top-name {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.disk-top-size {
+    color: var(--text-muted);
+    margin-left: 6px;
+}
+.disk-top-bar {
+    height: 4px;
+    background: var(--bg-hover);
+    border-radius: 2px;
+    margin-top: 3px;
+    overflow: hidden;
+}
+.disk-top-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
 }
 /* ── Toast ─────────────────────────────────────────────────────── */
 .toast-container {

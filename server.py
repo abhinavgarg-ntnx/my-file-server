@@ -77,6 +77,7 @@ from svgs import (
     SVG_STAR_OUTLINE,
     SVG_STAR_FILLED,
     SVG_SEARCH,
+    SVG_MOVE,
 )
 from charts import download_and_extract_chart, HAS_REQUESTS
 
@@ -425,6 +426,11 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/__api__/search":
             qs = urllib.parse.parse_qs(parsed.query)
             return self._handle_search(qs)
+        if path == "/__api__/list-dirs":
+            qs = urllib.parse.parse_qs(parsed.query)
+            return self._handle_list_dirs(qs.get("dir", ["/"])[0])
+        if path == "/__api__/disk-usage":
+            return self._handle_disk_usage()
         if path.startswith("/__api__/cm/"):
             return self._proxy_cm("GET", path[len("/__api__/cm") :])  # noqa: E203
 
@@ -446,6 +452,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return self._handle_savefile()
         if path == "/__api__/rename":
             return self._handle_rename()
+        if path == "/__api__/move":
+            return self._handle_move()
         if path == "/__api__/zip-start":
             return self._handle_zip_start()
         if path == "/__api__/zip-cancel":
@@ -737,9 +745,15 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             )
 
             try:
-                raw_size = 0 if is_dir else os.path.getsize(fullname)
+                if is_dir:
+                    try:
+                        raw_size = self._dir_size(fullname, depth=3)
+                    except (PermissionError, OSError):
+                        raw_size = 0
+                else:
+                    raw_size = os.path.getsize(fullname)
                 raw_mtime = os.path.getmtime(fullname)
-                size_str = "-" if is_dir else self._format_size(raw_size)
+                size_str = self._format_size(raw_size) if raw_size else "-"
                 mtime_str = datetime.fromtimestamp(raw_mtime).strftime("%Y-%m-%d %H:%M")
             except Exception:
                 raw_size, raw_mtime = 0, 0
@@ -796,9 +810,17 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             actions += (
                 f'<button class="act-btn copy-btn" title="Copy link"'
                 f' onclick="event.preventDefault();event.stopPropagation();'
-                f"copyLink('{copy_url}')\">{SVG_COPY}</button>"
+                f"copyLink('{copy_url}')\">{SVG_LINK}</button>"
             )
             if not is_cm_dir and not is_system:
+                move_path = esc(link.rstrip("/"), quote=True).replace("'", "\\'")
+                move_name = esc(name, quote=True).replace("'", "\\'")
+                actions += (
+                    f'<button class="act-btn move-btn" title="Move"'
+                    f' onclick="event.preventDefault();event.stopPropagation();'
+                    f"showMoveModal('{move_path}','{move_name}')\">"
+                    f"{SVG_MOVE}</button>"
+                )
                 ren_path = esc(link.rstrip("/"), quote=True).replace("'", "\\'")
                 ren_name = esc(name, quote=True).replace("'", "\\'")
                 actions += (
@@ -850,6 +872,21 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             "</div>"
         )
 
+        disk_widget = ""
+        if displaypath == "/":
+            disk_widget = (
+                '<div class="disk-widget">'
+                '<div class="disk-header">'
+                '<span class="disk-title">Disk Usage</span>'
+                '<span class="disk-info">'
+                '<span id="disk-used">…</span> / <span id="disk-total">…</span>'
+                ' (<span id="disk-pct">…</span>)</span>'
+                "</div>"
+                '<div class="disk-track"><div class="disk-bar" id="disk-bar"></div></div>'
+                '<div class="disk-top" id="disk-top"></div>'
+                "</div>"
+            )
+
         content = (
             f'<div class="breadcrumb">{bc}</div>'
             f"{upload_html}"
@@ -859,12 +896,15 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             f'<table class="file-table">'
             f'<tbody class="file-list">{"".join(items)}</tbody>'
             f"</table></div>"
+            f"{disk_widget}"
         )
 
         modals = ""
         if not is_cm_dir:
-            modals = _load_template("delete_modal.html") + _load_template(
-                "input_modal.html"
+            modals = (
+                _load_template("delete_modal.html")
+                + _load_template("input_modal.html")
+                + _load_template("move_modal.html")
             )
 
         html = _render_page(
@@ -1202,7 +1242,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             actions += (
                 f'<button class="act-btn copy-btn" title="Copy link"'
                 f' onclick="event.preventDefault();event.stopPropagation();'
-                f"copyLink('{copy_url_esc}')\">{SVG_COPY}</button>"
+                f"copyLink('{copy_url_esc}')\">{SVG_LINK}</button>"
             )
 
             items.append(
@@ -1229,9 +1269,20 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 "This directory is empty</td></tr>"
             )
 
+        remote_filter = (
+            '<div class="search-bar">'
+            f'<div class="search-input-wrap">{SVG_SEARCH}'
+            '<input class="search-input" id="search-input"'
+            ' type="text" placeholder="Filter files…"'
+            ' data-dir="" data-remote="1">'
+            '<kbd class="search-kbd">/</kbd>'
+            "</div></div>"
+        )
+
         content = (
             f'<div class="breadcrumb">{bc}</div>'
             f"{sort_bar}"
+            f"{remote_filter}"
             f'<div class="file-list-wrap">'
             f'<table class="file-table">'
             f'<tbody class="file-list">{"".join(items)}</tbody>'
@@ -1828,6 +1879,152 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             log.exception("Rename failed for %s", local)
             self._send_json({"success": False, "error": str(e)}, 500)
 
+    def _handle_move(self):
+        try:
+            data = self._read_json_body()
+        except Exception:
+            self._send_json({"success": False, "error": "Invalid body"}, 400)
+            return
+
+        src_path = data.get("src", "").strip().rstrip("/")
+        dest_dir = data.get("dest", "").strip().rstrip("/") or "/"
+
+        if not src_path:
+            self._send_json({"success": False, "error": "Source path required"}, 400)
+            return
+
+        src_local = self._safe_local(src_path)
+        dest_local = self._safe_local(dest_dir)
+        if not src_local or not dest_local:
+            self._send_json({"success": False, "error": "Invalid path"}, 403)
+            return
+        if self._is_cm_protected(src_local):
+            self._send_json(
+                {"success": False, "error": "Cannot move chart repo items"}, 403
+            )
+            return
+        if not os.path.exists(src_local):
+            self._send_json({"success": False, "error": "Source not found"}, 404)
+            return
+        if not os.path.isdir(dest_local):
+            self._send_json(
+                {"success": False, "error": "Destination is not a directory"}, 400
+            )
+            return
+
+        basename = os.path.basename(src_local)
+        real_served = os.path.realpath(self.server_dir)
+        if (
+            os.path.realpath(os.path.dirname(src_local)) == real_served
+            and basename in SYSTEM_DIRS
+        ):
+            self._send_json(
+                {"success": False, "error": "Cannot move system directories"}, 403
+            )
+            return
+
+        new_path = os.path.join(dest_local, basename)
+        real_new = os.path.realpath(new_path)
+        real_src = os.path.realpath(src_local)
+        if real_new.startswith(real_src + os.sep):
+            self._send_json(
+                {"success": False, "error": "Cannot move a folder into itself"},
+                400,
+            )
+            return
+        if os.path.exists(new_path):
+            self._send_json(
+                {
+                    "success": False,
+                    "error": f"'{basename}' already exists in destination",
+                },
+                409,
+            )
+            return
+
+        try:
+            shutil.move(src_local, new_path)
+            log.info("Moved %s → %s", src_local, new_path)
+            self._send_json({"success": True})
+        except Exception as e:
+            log.exception("Move failed for %s", src_local)
+            self._send_json({"success": False, "error": str(e)}, 500)
+
+    def _handle_list_dirs(self, dir_path):
+        local = self._safe_local(dir_path)
+        if not local or not os.path.isdir(local):
+            self._send_json({"dirs": [], "error": "Invalid directory"}, 400)
+            return
+
+        dirs = []
+        try:
+            for entry in sorted(os.scandir(local), key=lambda e: e.name.lower()):
+                if entry.is_dir(follow_symlinks=True) and not entry.name.startswith(
+                    "."
+                ):
+                    rel = os.path.relpath(entry.path, self.server_dir)
+                    dirs.append(
+                        {"name": entry.name, "path": "/" + rel.replace(os.sep, "/")}
+                    )
+        except PermissionError:
+            pass
+        self._send_json({"dirs": dirs, "current": dir_path})
+
+    def _handle_disk_usage(self):
+        served = os.path.realpath(self.server_dir)
+        try:
+            usage = shutil.disk_usage(served)
+            total_gb = usage.total / (1024**3)
+            used_gb = usage.used / (1024**3)
+            free_gb = usage.free / (1024**3)
+            pct = (usage.used / usage.total * 100) if usage.total else 0
+        except Exception:
+            self._send_json({"error": "Cannot read disk usage"}, 500)
+            return
+
+        top_dirs = []
+        try:
+            for entry in os.scandir(served):
+                if entry.is_dir(follow_symlinks=True) and not entry.name.startswith(
+                    "."
+                ):
+                    try:
+                        size = sum(
+                            f.stat(follow_symlinks=False).st_size
+                            for f in os.scandir(entry.path)
+                            if f.is_file(follow_symlinks=False)
+                        )
+                        for sub in os.scandir(entry.path):
+                            if sub.is_dir(follow_symlinks=True):
+                                try:
+                                    for f in os.scandir(sub.path):
+                                        if f.is_file(follow_symlinks=False):
+                                            size += f.stat(
+                                                follow_symlinks=False
+                                            ).st_size
+                                except (PermissionError, OSError):
+                                    pass
+                    except (PermissionError, OSError):
+                        size = 0
+                    top_dirs.append({"name": entry.name, "size": size})
+        except (PermissionError, OSError):
+            pass
+
+        top_dirs.sort(key=lambda d: d["size"], reverse=True)
+
+        self._send_json(
+            {
+                "total": usage.total,
+                "used": usage.used,
+                "free": usage.free,
+                "total_h": f"{total_gb:.1f} GB",
+                "used_h": f"{used_gb:.1f} GB",
+                "free_h": f"{free_gb:.1f} GB",
+                "pct": round(pct, 1),
+                "top_dirs": top_dirs[:10],
+            }
+        )
+
     def _handle_readfile(self, file_path):
         if not file_path:
             self._send_json({"error": "Path required"}, 400)
@@ -2054,6 +2251,27 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return False
         printable = sum(1 for b in sample if b in (9, 10, 13) or 32 <= b <= 126)
         return (printable / len(sample)) >= 0.90
+
+    @staticmethod
+    @staticmethod
+    def _dir_size(path, depth=3):
+        total = 0
+        if depth <= 0:
+            return 0
+        try:
+            for entry in os.scandir(path):
+                try:
+                    if entry.is_file(follow_symlinks=False):
+                        total += entry.stat(follow_symlinks=False).st_size
+                    elif entry.is_dir(follow_symlinks=False) and depth > 1:
+                        total += FileServerHandler._dir_size(
+                            entry.path, depth - 1
+                        )
+                except (PermissionError, OSError):
+                    pass
+        except (PermissionError, OSError):
+            pass
+        return total
 
     @staticmethod
     def _format_size(size):
