@@ -140,7 +140,11 @@ SYSTEM_DIRS = {"charts", "helm-charts"}
 REMOTE_FILERS = {
     "pc-builds": {
         "label": "PC Builds",
-        "url": "http://endor.dyn.nutanix.com/builds/pc-builds/master/",
+        # Point at the pc-builds root so the filer lists *all* build trains
+        # (euphrates/feat/fraser/master/...), not just the master branch. The
+        # per-branch commit builds are still reachable by drilling into a
+        # train (e.g. master/) from here.
+        "url": "http://endor.dyn.nutanix.com/builds/pc-builds/",
     },
     "ncc-builds": {
         "label": "NCC Builds",

@@ -156,6 +156,62 @@ def _save_favorites(favs):
     _FAVORITES_FILE.write_text(json.dumps(sorted(favs)))
 
 
+# ── Remote-filer overrides (admin-managed, password-gated) ─────────────
+# The built-in REMOTE_FILERS in config.py are the shipping defaults. Admins can
+# curate the list from the UI (/__filers__); their edits persist to this JSON
+# file and become authoritative. Deleting the file (Reset) reverts to defaults.
+
+_FILERS_FILE = DATA_DIR / "filers.json"
+_filers_lock = threading.Lock()
+
+# Gem-hexagon mark that matches the header logo — served at /favicon.svg so the
+# browser tab shows a recognisable icon.
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+    '<defs><linearGradient id="bg" x1="2" y1="2" x2="22" y2="22"'
+    ' gradientUnits="userSpaceOnUse">'
+    '<stop stop-color="#4f46e5"/><stop offset="1" stop-color="#0ea5e9"/>'
+    "</linearGradient></defs>"
+    '<polygon points="12,1 20.5,5.5 20.5,18.5 12,23 3.5,18.5 3.5,5.5"'
+    ' fill="url(#bg)"/>'
+    '<path d="M6.5 7 L17.5 7 L12 12.5 Z" fill="#ffffff" opacity="0.95"/>'
+    '<path d="M8 18 L16 18 L12 13 Z" fill="#e0f2fe" opacity="0.9"/>'
+    '<circle cx="12" cy="8.6" r="1.3" fill="#4f46e5"/>'
+    "</svg>"
+).encode("utf-8")
+
+
+def _load_filer_overrides():
+    """Return the admin-managed filer map, or ``None`` when no overrides exist
+    (in which case the config defaults are authoritative)."""
+    try:
+        raw = json.loads(_FILERS_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(raw, dict) and isinstance(raw.get("filers"), dict):
+        return raw["filers"]
+    return None
+
+
+def _save_filer_overrides(filers):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _FILERS_FILE.write_text(json.dumps({"filers": filers}, indent=2))
+
+
+def _reset_filer_overrides():
+    try:
+        _FILERS_FILE.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _effective_filers():
+    """The remote-filer map actually used across the app: admin overrides when
+    present, otherwise the built-in defaults. Insertion order is preserved."""
+    ov = _load_filer_overrides()
+    return ov if ov is not None else dict(REMOTE_FILERS)
+
+
 # ── ZIP job infrastructure ─────────────────────────────────────────────
 
 _zip_jobs = {}
@@ -290,18 +346,40 @@ _CHARTS_BTN_HTML = (
     f"{SVG_HELM}</a>"
 )
 
-_FILERS_DROPDOWN = ""
-if REMOTE_FILERS:
-    _items = "".join(
-        f'<a class="filer-item" href="/__remote__/{k}/">'
-        f'{html_module.escape(v["label"])}</a>'
-        for k, v in REMOTE_FILERS.items()
+_SVG_GEAR = (
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"'
+    ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+    ' stroke-linejoin="round"><circle cx="12" cy="12" r="3"/>'
+    '<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06'
+    "a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09"
+    "A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83"
+    "l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09"
+    "A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83"
+    "l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09"
+    "a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83"
+    "l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09"
+    'a1.65 1.65 0 00-1.51 1z"/></svg>'
+)
+
+
+def _render_filers_dropdown():
+    """Build the header's remote-filer dropdown from the *effective* filer map
+    so admin edits (via /__filers__) show up immediately, plus a Manage entry."""
+    filers = _effective_filers()
+    items = "".join(
+        f'<a class="filer-item" href="/__remote__/{html_module.escape(k)}/">'
+        f'{html_module.escape(v.get("label", k))}</a>'
+        for k, v in filers.items()
     )
-    _FILERS_DROPDOWN = (
+    manage = (
+        '<a class="filer-item filer-item-manage" href="/__filers__">'
+        f"{_SVG_GEAR}<span>Manage filers…</span></a>"
+    )
+    return (
         '<div class="filer-dropdown">'
         '<button class="hdr-btn icon-only" onclick="toggleFilerMenu(event)"'
         f' title="Remote Filers">{SVG_FILERS}</button>'
-        f'<div class="filer-menu" id="filer-menu">{_items}</div>'
+        f'<div class="filer-menu" id="filer-menu">{items}{manage}</div>'
         "</div>"
     )
 
@@ -318,7 +396,7 @@ def _render_header(show_charts=True):
     return render_template(
         "header.html",
         CHARTS_BUTTON=charts_btn,
-        FILERS_BUTTON=_FILERS_DROPDOWN,
+        FILERS_BUTTON=_render_filers_dropdown(),
         FAVORITES_BUTTON=_FAVORITES_BTN_HTML,
         SVG_GITHUB=SVG_GITHUB,
     )
@@ -400,8 +478,12 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        if path in ("/favicon.svg", "/favicon.ico"):
+            return self._serve_favicon()
         if path.startswith("/__static__/"):
             return self._serve_static(path[len("/__static__/") :])  # noqa: E203
+        if path == "/__filers__":
+            return self._serve_filers_admin_page()
         if path.startswith("/__remote__/"):
             return self._serve_remote_page(path[len("/__remote__/") :])  # noqa: E203
         if path == "/__charts__":
@@ -444,6 +526,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/__api__/upload":
             return self._handle_upload()
+        if path == "/__api__/filers":
+            return self._handle_filers_save()
         if path == "/__api__/delete":
             return self._handle_delete()
         if path == "/__api__/mkdir":
@@ -1091,7 +1175,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         filer_key = parts[0] if parts else ""
         subpath = (parts[1] + "/") if len(parts) > 1 and parts[1] else ""
 
-        filer = REMOTE_FILERS.get(filer_key)
+        filer = _effective_filers().get(filer_key)
         if not filer:
             self.send_error(404, "Unknown filer")
             return
@@ -1300,6 +1384,227 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── Favorites ─────────────────────────────────────────────────
 
+    def _serve_favicon(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(_FAVICON_SVG)))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        try:
+            self.wfile.write(_FAVICON_SVG)
+        except BrokenPipeError:
+            pass
+
+    # ── Remote-filer admin (password-gated) ──────────────────────
+
+    def _serve_filers_admin_page(self):
+        esc = html_module.escape
+        filers = _effective_filers()
+        using_defaults = _load_filer_overrides() is None
+
+        def _row(key="", label="", url=""):
+            return (
+                '<tr class="fa-row">'
+                '<td><input class="fa-inp fa-label" value="'
+                + esc(label, quote=True)
+                + '" placeholder="PC Builds"></td>'
+                '<td><input class="fa-inp fa-key" value="'
+                + esc(key, quote=True)
+                + '" placeholder="pc-builds"></td>'
+                '<td><input class="fa-inp fa-url" value="'
+                + esc(url, quote=True)
+                + '" placeholder="http://host/path/"></td>'
+                '<td class="fa-rm"><button class="fa-x" title="Remove"'
+                ' onclick="faRemoveRow(this)">\u2715</button></td>'
+                "</tr>"
+            )
+
+        rows = "".join(
+            _row(k, v.get("label", ""), v.get("url", "")) for k, v in filers.items()
+        )
+
+        bc = (
+            f'<a class="bc-chip" href="/">{SVG_HOME} Home</a>'
+            '<span class="bc-sep">/</span>'
+            f'<span class="bc-chip">{SVG_FILERS} Manage Filers</span>'
+        )
+        source_note = (
+            '<span class="sys-tag">built-in defaults</span>'
+            if using_defaults
+            else '<span class="sys-tag" style="background:var(--accent-subtle);'
+            'color:var(--accent)">custom overrides active</span>'
+        )
+
+        content = (
+            f'<div class="breadcrumb">{bc}</div>'
+            '<div class="fa-wrap">'
+            '<h2 class="fa-title">Remote Filers</h2>'
+            '<p class="fa-sub">Shortcuts listed in the header\u2019s Filers menu \u2014 '
+            "each points at an Apache/httpd directory-listing URL. Editing requires "
+            f"the admin password. {source_note}</p>"
+            '<div class="fa-tablewrap"><table class="fa-table">'
+            "<thead><tr><th>Label</th><th>Key (URL slug)</th>"
+            "<th>Base URL</th><th></th></tr></thead>"
+            f'<tbody id="fa-rows">{rows}</tbody></table></div>'
+            '<div class="fa-add"><button class="hdr-btn" onclick="faAddRow()">'
+            f"{SVG_FOLDER_PLUS}<span>Add filer</span></button></div>"
+            '<div class="fa-actions">'
+            '<input id="fa-pass" type="password" class="fa-inp fa-pass"'
+            ' placeholder="Admin password" autocomplete="off">'
+            '<button class="hdr-btn accent" onclick="faSave()">Save changes</button>'
+            '<button class="hdr-btn fa-reset" onclick="faReset()">Reset to defaults'
+            "</button>"
+            '<span id="fa-status" class="fa-status"></span>'
+            "</div></div>"
+        )
+
+        extra_head = (
+            "<style>"
+            ".fa-wrap{max-width:900px;margin:0 auto;background:var(--bg-card);"
+            "border:1px solid var(--border);border-radius:14px;padding:20px 22px;}"
+            ".fa-title{font-size:18px;font-weight:600;color:var(--text-primary);"
+            "margin:0 0 2px;}"
+            ".fa-sub{font-size:12.5px;color:var(--text-secondary);margin:0 0 14px;"
+            "line-height:1.5;}"
+            ".fa-tablewrap{overflow-x:auto;}"
+            ".fa-table{width:100%;border-collapse:collapse;font-size:13px;}"
+            ".fa-table th{text-align:left;padding:6px 8px;font-size:10.5px;"
+            "text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);"
+            "border-bottom:1px solid var(--border);}"
+            ".fa-table td{padding:5px 6px;vertical-align:middle;}"
+            ".fa-inp{width:100%;background:var(--bg-input);border:1px solid var(--border);"
+            "border-radius:8px;padding:7px 9px;color:var(--text-primary);font-size:13px;"
+            "outline:none;transition:border-color .15s;}"
+            ".fa-inp:focus{border-color:var(--accent);}"
+            ".fa-key,.fa-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}"
+            ".fa-url{font-size:12px;}"
+            ".fa-rm{width:34px;text-align:center;}"
+            ".fa-x{background:none;border:none;color:var(--text-muted);cursor:pointer;"
+            "padding:4px 7px;border-radius:6px;font-size:14px;line-height:1;}"
+            ".fa-x:hover{color:var(--danger);background:var(--danger-subtle);}"
+            ".fa-add{margin:12px 0 4px;}"
+            ".fa-add .hdr-btn{gap:6px;padding:6px 12px;width:auto;}"
+            ".fa-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;"
+            "margin-top:16px;padding-top:14px;border-top:1px solid var(--border);}"
+            ".fa-pass{width:200px;flex:none;}"
+            ".fa-actions .hdr-btn{width:auto;padding:8px 14px;}"
+            ".fa-reset{color:var(--danger);}"
+            ".fa-status{font-size:12.5px;font-weight:500;}"
+            ".fa-status.ok{color:#10b981;}.fa-status.err{color:var(--danger);}"
+            "</style>"
+        )
+
+        extra_scripts = (
+            "<script>"
+            "function faRowHtml(){"
+            "return '<tr class=\"fa-row\">'"
+            "+'<td><input class=\"fa-inp fa-label\" placeholder=\"PC Builds\"></td>'"
+            "+'<td><input class=\"fa-inp fa-key\" placeholder=\"pc-builds\"></td>'"
+            "+'<td><input class=\"fa-inp fa-url\" placeholder=\"http://host/path/\"></td>'"
+            "+'<td class=\"fa-rm\"><button class=\"fa-x\" title=\"Remove\""
+            " onclick=\"faRemoveRow(this)\">\\u2715</button></td></tr>';}"
+            "function faAddRow(){document.getElementById('fa-rows')"
+            ".insertAdjacentHTML('beforeend',faRowHtml());}"
+            "function faRemoveRow(b){var t=b.closest('tr');if(t)t.remove();}"
+            "function faStatus(m,ok){var s=document.getElementById('fa-status');"
+            "s.textContent=m;s.className='fa-status '+(ok?'ok':'err');}"
+            "function faCollect(){var rows=[];"
+            "document.querySelectorAll('#fa-rows .fa-row').forEach(function(tr){"
+            "var l=tr.querySelector('.fa-label').value.trim();"
+            "var k=tr.querySelector('.fa-key').value.trim();"
+            "var u=tr.querySelector('.fa-url').value.trim();"
+            "if(l||k||u)rows.push({label:l,key:k,url:u});});return rows;}"
+            "function faPost(body,okMsg){body.password="
+            "document.getElementById('fa-pass').value;faStatus('Saving\\u2026',true);"
+            "fetch('/__api__/filers',{method:'POST',"
+            "headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})"
+            ".then(function(r){return r.json().then(function(j){"
+            "return {ok:r.ok,j:j};});}).then(function(res){"
+            "if(res.ok&&res.j.success){faStatus(okMsg,true);"
+            "setTimeout(function(){location.reload();},700);}"
+            "else{faStatus((res.j&&res.j.error)||'Save failed',false);}})"
+            ".catch(function(){faStatus('Network error',false);});}"
+            "function faSave(){var r=faCollect();if(!r.length){"
+            "faStatus('Add at least one filer, or use Reset.',false);return;}"
+            "faPost({action:'save',filers:r},'Saved \\u2713');}"
+            "function faReset(){if(!confirm('Reset remote filers to the built-in "
+            "defaults?'))return;faPost({action:'reset'},'Reset to defaults \\u2713');}"
+            "</script>"
+        )
+
+        html = _render_page(
+            "Manage Filers \u2014 Caffrey's Treasure",
+            content,
+            header_html=_render_header(),
+            extra_head=extra_head,
+            extra_scripts=extra_scripts,
+        )
+        self._send_html(html)
+
+    def _handle_filers_save(self):
+        try:
+            data = self._read_json_body()
+        except Exception:
+            self._send_json({"success": False, "error": "Invalid request body"}, 400)
+            return
+
+        if data.get("password", "") != DELETE_PASSWORD:
+            log.warning("Filer config change rejected: wrong password")
+            self._send_json({"success": False, "error": "Invalid password"}, 403)
+            return
+
+        with _filers_lock:
+            if data.get("action") == "reset":
+                _reset_filer_overrides()
+                log.info("Remote filer config reset to built-in defaults")
+                self._send_json({"success": True, "filers": _effective_filers()})
+                return
+
+            rows = data.get("filers")
+            if not isinstance(rows, list):
+                self._send_json({"success": False, "error": "filers must be a list"}, 400)
+                return
+
+            cleaned = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                key = re.sub(r"[^a-z0-9-]", "", str(row.get("key", "")).strip().lower())
+                label = str(row.get("label", "")).strip()
+                url = str(row.get("url", "")).strip()
+                if not key or not label or not url:
+                    self._send_json(
+                        {"success": False, "error": "Each filer needs a label, key and URL"},
+                        400,
+                    )
+                    return
+                if not url.startswith(("http://", "https://")):
+                    self._send_json(
+                        {
+                            "success": False,
+                            "error": f"URL for '{key}' must start with http:// or https://",
+                        },
+                        400,
+                    )
+                    return
+                if key in cleaned:
+                    self._send_json(
+                        {"success": False, "error": f"Duplicate key '{key}'"}, 400
+                    )
+                    return
+                cleaned[key] = {"label": label, "url": url}
+
+            if not cleaned:
+                self._send_json(
+                    {"success": False, "error": "At least one filer is required (or Reset)"},
+                    400,
+                )
+                return
+
+            _save_filer_overrides(cleaned)
+            log.info("Remote filer config updated: %d filers", len(cleaned))
+        self._send_json({"success": True, "filers": cleaned})
+
     def _handle_favorites_get(self):
         with _fav_lock:
             favs = sorted(_load_favorites())
@@ -1357,7 +1662,9 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                         if "/" in fav_path.strip("/")
                         else ""
                     )
-                    label = REMOTE_FILERS.get(filer_key, {}).get("label", filer_key)
+                    label = _effective_filers().get(filer_key, {}).get(
+                        "label", filer_key
+                    )
                 else:
                     label = "Remote"
                 badge = f' <span class="sys-tag">{esc(label)}</span>'
