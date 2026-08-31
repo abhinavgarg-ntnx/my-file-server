@@ -83,6 +83,10 @@
   /* ── Copy link ──────────────────────────────────────────────── */
 
   window.copyLink = function (url) {
+    // Resolve local relative paths against the origin the user is viewing.
+    // This avoids copying a stale/misdetected hostname while keeping remote
+    // filer URLs absolute and unchanged.
+    url = new URL(url, window.location.href).href;
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(function () {
         toast("Link copied", "success");
@@ -159,7 +163,12 @@
   (function () {
     var input = document.getElementById("search-input");
     var resultsEl = document.getElementById("search-results");
-    if (!input || !resultsEl) return;
+    // Remote filer pages only render #search-input (local client-side filter),
+    // not #search-results — so require only the input and guard result usages.
+    if (!input) return;
+    function closeResults() {
+      if (resultsEl) resultsEl.classList.remove("open");
+    }
 
     var debounceTimer = null;
     var abortCtrl = null;
@@ -264,8 +273,8 @@
       var q = input.value.trim();
       if (!q) {
         resetLocal();
-        resultsEl.classList.remove("open");
-        resultsEl.innerHTML = "";
+        closeResults();
+        if (resultsEl) resultsEl.innerHTML = "";
         return;
       }
       filterLocal(q);
@@ -276,7 +285,7 @@
           doSearch(q);
         }, 350);
       } else {
-        resultsEl.classList.remove("open");
+        closeResults();
       }
     });
 
@@ -284,7 +293,7 @@
       if (e.key === "Escape") {
         input.value = "";
         resetLocal();
-        resultsEl.classList.remove("open");
+        closeResults();
         input.blur();
       }
     });
@@ -304,7 +313,7 @@
 
     document.addEventListener("click", function (e) {
       if (!e.target.closest(".search-bar")) {
-        resultsEl.classList.remove("open");
+        closeResults();
       }
     });
   })();

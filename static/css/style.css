@@ -186,6 +186,18 @@ html.light .github-btn:hover {
     transition: background var(--transition);
 }
 .filer-item:hover { background: var(--bg-hover); color: var(--accent); }
+.filer-item-manage {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    padding-top: 11px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+}
+.filer-item-manage svg { width: 14px; height: 14px; flex-shrink: 0; }
+.filer-item-manage:hover { color: var(--accent); }
 
 .hdr-btn svg {
     width: 16px;
@@ -257,6 +269,7 @@ html.light .github-btn:hover {
     color: var(--text-muted);
     font-size: 12px;
 }
+.bc-chip svg { width: 14px; height: 14px; flex-shrink: 0; }
 /* ── Upload area ───────────────────────────────────────────────── */
 .upload-section {
     display: none;

@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 import uuid
+import secrets
 import tempfile
 import urllib.parse
 import urllib.request
@@ -72,7 +73,6 @@ from svgs import (
     SVG_FILERS,
     SVG_FOLDER_PLUS,
     SVG_FILE_PLUS,
-    SVG_HELM,
     SVG_LINK,
     SVG_STAR_OUTLINE,
     SVG_STAR_FILLED,
@@ -212,6 +212,49 @@ def _effective_filers():
     return ov if ov is not None else dict(REMOTE_FILERS)
 
 
+# ── Admin session (password unlock, time-boxed) ────────────────────────
+# Viewing/editing the filer admin requires unlocking with the admin password.
+# A successful unlock issues an opaque token stored here with an expiry, mirrored
+# to an HttpOnly cookie. Sessions are in-memory (fine for a single-process file
+# server) and auto-expire, so the password stays "remembered" for the TTL only.
+
+_ADMIN_SESSION_TTL = 20 * 60  # seconds (within the requested 15–30 min window)
+_ADMIN_SESSIONS = {}  # token -> expiry epoch seconds
+_admin_sess_lock = threading.Lock()
+_ADMIN_COOKIE = "cfs_admin"
+
+
+def _admin_prune_sessions_locked():
+    now = time.time()
+    for tok in [t for t, exp in _ADMIN_SESSIONS.items() if exp <= now]:
+        _ADMIN_SESSIONS.pop(tok, None)
+
+
+def _admin_issue_session():
+    token = secrets.token_urlsafe(24)
+    with _admin_sess_lock:
+        _admin_prune_sessions_locked()
+        _ADMIN_SESSIONS[token] = time.time() + _ADMIN_SESSION_TTL
+    return token
+
+
+def _admin_session_remaining(token):
+    """Seconds left on a valid session token, else 0."""
+    if not token:
+        return 0
+    with _admin_sess_lock:
+        _admin_prune_sessions_locked()
+        exp = _ADMIN_SESSIONS.get(token)
+    return max(0, int(exp - time.time())) if exp else 0
+
+
+def _admin_revoke_session(token):
+    if not token:
+        return
+    with _admin_sess_lock:
+        _ADMIN_SESSIONS.pop(token, None)
+
+
 # ── ZIP job infrastructure ─────────────────────────────────────────────
 
 _zip_jobs = {}
@@ -341,10 +384,10 @@ def _zip_worker(job_id, local_path, cancel_event):
         _safe_unlink(tmp_path)
 
 
-_CHARTS_BTN_HTML = (
-    '<a href="/__charts__" class="hdr-btn icon-only" title="ChartMuseum">'
-    f"{SVG_HELM}</a>"
-)
+# ChartMuseum now lives in Nuginix (/artifactory/chartmuseum) — the file
+# server no longer surfaces it. Kept as an empty string so the header
+# renderer's CHARTS_BUTTON slot stays wired without showing anything.
+_CHARTS_BTN_HTML = ""
 
 _SVG_GEAR = (
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"'
@@ -486,8 +529,6 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return self._serve_filers_admin_page()
         if path.startswith("/__remote__/"):
             return self._serve_remote_page(path[len("/__remote__/") :])  # noqa: E203
-        if path == "/__charts__":
-            return self._serve_charts_page()
         if path.startswith("/__viewer__"):
             qs = urllib.parse.parse_qs(parsed.query)
             return self._serve_viewer_page(qs.get("file", [""])[0])
@@ -515,8 +556,6 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return self._handle_list_dirs(qs.get("dir", ["/"])[0])
         if path == "/__api__/disk-usage":
             return self._handle_disk_usage()
-        if path.startswith("/__api__/cm/"):
-            return self._proxy_cm("GET", path[len("/__api__/cm") :])  # noqa: E203
 
         return super().do_GET()
 
@@ -528,6 +567,10 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return self._handle_upload()
         if path == "/__api__/filers":
             return self._handle_filers_save()
+        if path == "/__api__/filers-auth":
+            return self._handle_filers_auth()
+        if path == "/__api__/filers-logout":
+            return self._handle_filers_logout()
         if path == "/__api__/delete":
             return self._handle_delete()
         if path == "/__api__/mkdir":
@@ -546,20 +589,10 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             return self._handle_zip_cancel()
         if path == "/__api__/favorites":
             return self._handle_favorites_post()
-        if path == "/__api__/chart-download":
-            return self._handle_chart_download()
-        if path.startswith("/__api__/cm/"):
-            return self._proxy_cm("POST", path[len("/__api__/cm") :])  # noqa: E203
 
         self.send_error(404, "Not found")
 
     def do_DELETE(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-
-        if path.startswith("/__api__/cm/"):
-            return self._proxy_cm("DELETE", path[len("/__api__/cm") :])  # noqa: E203
-
         self.send_error(404, "Not found")
 
     # ── ChartMuseum Proxy ─────────────────────────────────────────
@@ -730,10 +763,9 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             f' title="Download folder as ZIP">'
             f"{SVG_DOWNLOAD}</button>"
         )
-        folder_url = esc(
-            f"http://{HOSTNAME}:{PORT}" + urllib.parse.quote(displaypath, safe="/"),
-            quote=True,
-        ).replace("'", "\\'")
+        folder_url = esc(urllib.parse.quote(displaypath, safe="/"), quote=True).replace(
+            "'", "\\'"
+        )
         copy_folder_btn = (
             f'<button class="hdr-btn sm icon-only"'
             f" onclick=\"copyLink('{folder_url}')\""
@@ -890,9 +922,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     f'<a class="act-btn dl-btn" title="Download"'
                     f' href="{link}" download>{SVG_DOWNLOAD}</a>'
                 )
-            copy_url = esc(f"http://{HOSTNAME}:{PORT}{link}", quote=True).replace(
-                "'", "\\'"
-            )
+            copy_url = esc(link, quote=True).replace("'", "\\'")
             actions += (
                 f'<button class="act-btn copy-btn" title="Copy link"'
                 f' onclick="event.preventDefault();event.stopPropagation();'
@@ -945,7 +975,6 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 "This directory is empty</td></tr>"
             )
 
-        search_dir_enc = esc(displaypath, quote=True).replace("'", "\\'")
         search_bar = (
             '<div class="search-bar">'
             f'<div class="search-input-wrap">{SVG_SEARCH}'
@@ -1395,12 +1424,64 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         except BrokenPipeError:
             pass
 
-    # ── Remote-filer admin (password-gated) ──────────────────────
+    # ── Remote-filer admin (password-gated, time-boxed session) ──
+
+    def _admin_token_from_request(self):
+        """Read the admin session token from the request Cookie header."""
+        raw = self.headers.get("Cookie") or ""
+        for part in raw.split(";"):
+            part = part.strip()
+            if part.startswith(_ADMIN_COOKIE + "="):
+                return part[len(_ADMIN_COOKIE) + 1 :]
+        return None
+
+    def _handle_filers_auth(self):
+        try:
+            data = self._read_json_body()
+        except Exception:
+            self._send_json({"success": False, "error": "Invalid request body"}, 400)
+            return
+        if data.get("password", "") != DELETE_PASSWORD:
+            log.warning("Filer admin unlock rejected: wrong password")
+            self._send_json({"success": False, "error": "Invalid password"}, 403)
+            return
+        token = _admin_issue_session()
+        body = json.dumps({"success": True, "expiresIn": _ADMIN_SESSION_TTL}).encode(
+            "utf-8"
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header(
+            "Set-Cookie",
+            f"{_ADMIN_COOKIE}={token}; Path=/; Max-Age={_ADMIN_SESSION_TTL}; "
+            "HttpOnly; SameSite=Lax",
+        )
+        self.end_headers()
+        self.wfile.write(body)
+        log.info("Filer admin unlocked (session %ds)", _ADMIN_SESSION_TTL)
+
+    def _handle_filers_logout(self):
+        _admin_revoke_session(self._admin_token_from_request())
+        body = json.dumps({"success": True}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header(
+            "Set-Cookie",
+            f"{_ADMIN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
+        )
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_filers_admin_page(self):
         esc = html_module.escape
         filers = _effective_filers()
         using_defaults = _load_filer_overrides() is None
+        remaining = _admin_session_remaining(self._admin_token_from_request())
+        authed = remaining > 0
+        exp_min = max(1, (remaining + 59) // 60)
+        ttl_min = _ADMIN_SESSION_TTL // 60
 
         def _row(key="", label="", url=""):
             return (
@@ -1435,33 +1516,81 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             'color:var(--accent)">custom overrides active</span>'
         )
 
+        if authed:
+            statusbar = (
+                '<div class="fa-statusbar">'
+                '<span class="fa-lockstate"><span class="fa-dot fa-dot-on"></span>'
+                "Unlocked</span>"
+                f'<span class="fa-expiry">session expires in ~{exp_min} min</span>'
+                '<button class="hdr-btn fa-lockbtn" onclick="faLock()">Lock now'
+                "</button></div>"
+            )
+            inner = (
+                '<h2 class="fa-title">Remote Filers</h2>'
+                '<p class="fa-sub">Shortcuts listed in the header\u2019s Filers menu '
+                "\u2014 each points at an Apache/httpd directory-listing URL. "
+                f"{source_note}</p>"
+                '<div class="fa-tablewrap"><table class="fa-table">'
+                "<thead><tr><th>Label</th><th>Key (URL slug)</th>"
+                "<th>Base URL</th><th></th></tr></thead>"
+                f'<tbody id="fa-rows">{rows}</tbody></table></div>'
+                '<div class="fa-add"><button class="hdr-btn" onclick="faAddRow()">'
+                f"{SVG_FOLDER_PLUS}<span>Add filer</span></button></div>"
+                '<div class="fa-actions">'
+                '<button class="hdr-btn accent" onclick="faSave()">Save changes'
+                "</button>"
+                '<button class="hdr-btn fa-reset" onclick="faReset()">Reset to '
+                "defaults</button>"
+                '<span id="fa-status" class="fa-status"></span>'
+                "</div>"
+            )
+        else:
+            statusbar = (
+                '<div class="fa-statusbar">'
+                '<span class="fa-lockstate"><span class="fa-dot fa-dot-off"></span>'
+                "Locked</span></div>"
+            )
+            inner = (
+                '<h2 class="fa-title">Remote Filers</h2>'
+                '<p class="fa-sub">Manage the header\u2019s Filers shortcuts. Unlock '
+                "with the admin password to view and edit \u2014 your session then "
+                f"stays active for {ttl_min} minutes.</p>"
+                '<div class="fa-unlock">'
+                '<input id="fa-unlock-pass" type="password" class="fa-inp fa-pass"'
+                ' placeholder="Admin password" autocomplete="off"'
+                " onkeydown=\"if(event.key==='Enter')faUnlock()\">"
+                '<button class="hdr-btn accent" onclick="faUnlock()">Unlock</button>'
+                '<span id="fa-status" class="fa-status"></span>'
+                "</div>"
+            )
+
         content = (
+            '<div class="fa-page">'
             f'<div class="breadcrumb">{bc}</div>'
-            '<div class="fa-wrap">'
-            '<h2 class="fa-title">Remote Filers</h2>'
-            '<p class="fa-sub">Shortcuts listed in the header\u2019s Filers menu \u2014 '
-            "each points at an Apache/httpd directory-listing URL. Editing requires "
-            f"the admin password. {source_note}</p>"
-            '<div class="fa-tablewrap"><table class="fa-table">'
-            "<thead><tr><th>Label</th><th>Key (URL slug)</th>"
-            "<th>Base URL</th><th></th></tr></thead>"
-            f'<tbody id="fa-rows">{rows}</tbody></table></div>'
-            '<div class="fa-add"><button class="hdr-btn" onclick="faAddRow()">'
-            f"{SVG_FOLDER_PLUS}<span>Add filer</span></button></div>"
-            '<div class="fa-actions">'
-            '<input id="fa-pass" type="password" class="fa-inp fa-pass"'
-            ' placeholder="Admin password" autocomplete="off">'
-            '<button class="hdr-btn accent" onclick="faSave()">Save changes</button>'
-            '<button class="hdr-btn fa-reset" onclick="faReset()">Reset to defaults'
-            "</button>"
-            '<span id="fa-status" class="fa-status"></span>'
-            "</div></div>"
+            f'<div class="fa-wrap">{statusbar}{inner}</div>'
+            "</div>"
         )
 
         extra_head = (
             "<style>"
-            ".fa-wrap{max-width:900px;margin:0 auto;background:var(--bg-card);"
+            ".fa-page{max-width:920px;margin:0 auto;}"
+            ".fa-wrap{background:var(--bg-card);"
             "border:1px solid var(--border);border-radius:14px;padding:20px 22px;}"
+            ".fa-statusbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;"
+            "margin-bottom:14px;font-size:12.5px;color:var(--text-secondary);}"
+            ".fa-lockstate{display:inline-flex;align-items:center;font-weight:600;"
+            "color:var(--text-primary);}"
+            ".fa-dot{display:inline-block;width:9px;height:9px;border-radius:50%;"
+            "margin-right:7px;}"
+            ".fa-dot-on{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.18);}"
+            ".fa-dot-off{background:var(--danger);"
+            "box-shadow:0 0 0 3px rgba(239,68,68,.15);}"
+            ".fa-expiry{color:var(--text-muted);}"
+            ".fa-lockbtn{width:auto;padding:4px 12px;margin-left:auto;font-size:12px;}"
+            ".fa-unlock{display:flex;align-items:center;gap:10px;flex-wrap:wrap;"
+            "margin-top:4px;}"
+            ".fa-unlock .fa-pass{width:240px;}"
+            ".fa-unlock .hdr-btn{width:auto;padding:8px 16px;}"
             ".fa-title{font-size:18px;font-weight:600;color:var(--text-primary);"
             "margin:0 0 2px;}"
             ".fa-sub{font-size:12.5px;color:var(--text-secondary);margin:0 0 14px;"
@@ -1498,30 +1627,31 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             "<script>"
             "function faRowHtml(){"
             "return '<tr class=\"fa-row\">'"
-            "+'<td><input class=\"fa-inp fa-label\" placeholder=\"PC Builds\"></td>'"
-            "+'<td><input class=\"fa-inp fa-key\" placeholder=\"pc-builds\"></td>'"
-            "+'<td><input class=\"fa-inp fa-url\" placeholder=\"http://host/path/\"></td>'"
-            "+'<td class=\"fa-rm\"><button class=\"fa-x\" title=\"Remove\""
-            " onclick=\"faRemoveRow(this)\">\\u2715</button></td></tr>';}"
+            '+\'<td><input class="fa-inp fa-label" placeholder="PC Builds"></td>\''
+            '+\'<td><input class="fa-inp fa-key" placeholder="pc-builds"></td>\''
+            '+\'<td><input class="fa-inp fa-url" placeholder="http://host/path/"></td>\''
+            '+\'<td class="fa-rm"><button class="fa-x" title="Remove"'
+            ' onclick="faRemoveRow(this)">\\u2715</button></td></tr>\';}'
             "function faAddRow(){document.getElementById('fa-rows')"
             ".insertAdjacentHTML('beforeend',faRowHtml());}"
             "function faRemoveRow(b){var t=b.closest('tr');if(t)t.remove();}"
             "function faStatus(m,ok){var s=document.getElementById('fa-status');"
-            "s.textContent=m;s.className='fa-status '+(ok?'ok':'err');}"
+            "if(s){s.textContent=m;s.className='fa-status '+(ok?'ok':'err');}}"
             "function faCollect(){var rows=[];"
             "document.querySelectorAll('#fa-rows .fa-row').forEach(function(tr){"
             "var l=tr.querySelector('.fa-label').value.trim();"
             "var k=tr.querySelector('.fa-key').value.trim();"
             "var u=tr.querySelector('.fa-url').value.trim();"
             "if(l||k||u)rows.push({label:l,key:k,url:u});});return rows;}"
-            "function faPost(body,okMsg){body.password="
-            "document.getElementById('fa-pass').value;faStatus('Saving\\u2026',true);"
+            "function faPost(body,okMsg){faStatus('Working\\u2026',true);"
             "fetch('/__api__/filers',{method:'POST',"
             "headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})"
             ".then(function(r){return r.json().then(function(j){"
-            "return {ok:r.ok,j:j};});}).then(function(res){"
+            "return {ok:r.ok,status:r.status,j:j};});}).then(function(res){"
             "if(res.ok&&res.j.success){faStatus(okMsg,true);"
             "setTimeout(function(){location.reload();},700);}"
+            "else if(res.status===401){faStatus('Session expired \\u2014 reloading to "
+            "unlock\\u2026',false);setTimeout(function(){location.reload();},1000);}"
             "else{faStatus((res.j&&res.j.error)||'Save failed',false);}})"
             ".catch(function(){faStatus('Network error',false);});}"
             "function faSave(){var r=faCollect();if(!r.length){"
@@ -1529,6 +1659,21 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
             "faPost({action:'save',filers:r},'Saved \\u2713');}"
             "function faReset(){if(!confirm('Reset remote filers to the built-in "
             "defaults?'))return;faPost({action:'reset'},'Reset to defaults \\u2713');}"
+            "function faUnlock(){var p=document.getElementById('fa-unlock-pass');"
+            "var pass=p?p.value:'';if(!pass){faStatus('Enter the admin password.',"
+            "false);return;}faStatus('Unlocking\\u2026',true);"
+            "fetch('/__api__/filers-auth',{method:'POST',"
+            "headers:{'Content-Type':'application/json'},"
+            "body:JSON.stringify({password:pass})})"
+            ".then(function(r){return r.json().then(function(j){"
+            "return {ok:r.ok,j:j};});}).then(function(res){"
+            "if(res.ok&&res.j.success){faStatus('Unlocked \\u2713',true);"
+            "setTimeout(function(){location.reload();},500);}"
+            "else{faStatus((res.j&&res.j.error)||'Invalid password',false);}})"
+            ".catch(function(){faStatus('Network error',false);});}"
+            "function faLock(){fetch('/__api__/filers-logout',{method:'POST'})"
+            ".then(function(){location.reload();})"
+            ".catch(function(){location.reload();});}"
             "</script>"
         )
 
@@ -1542,15 +1687,15 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
         self._send_html(html)
 
     def _handle_filers_save(self):
+        if _admin_session_remaining(self._admin_token_from_request()) <= 0:
+            self._send_json(
+                {"success": False, "error": "Session expired — unlock again"}, 401
+            )
+            return
         try:
             data = self._read_json_body()
         except Exception:
             self._send_json({"success": False, "error": "Invalid request body"}, 400)
-            return
-
-        if data.get("password", "") != DELETE_PASSWORD:
-            log.warning("Filer config change rejected: wrong password")
-            self._send_json({"success": False, "error": "Invalid password"}, 403)
             return
 
         with _filers_lock:
@@ -1562,7 +1707,9 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
 
             rows = data.get("filers")
             if not isinstance(rows, list):
-                self._send_json({"success": False, "error": "filers must be a list"}, 400)
+                self._send_json(
+                    {"success": False, "error": "filers must be a list"}, 400
+                )
                 return
 
             cleaned = {}
@@ -1574,7 +1721,10 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                 url = str(row.get("url", "")).strip()
                 if not key or not label or not url:
                     self._send_json(
-                        {"success": False, "error": "Each filer needs a label, key and URL"},
+                        {
+                            "success": False,
+                            "error": "Each filer needs a label, key and URL",
+                        },
                         400,
                     )
                     return
@@ -1596,7 +1746,10 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
 
             if not cleaned:
                 self._send_json(
-                    {"success": False, "error": "At least one filer is required (or Reset)"},
+                    {
+                        "success": False,
+                        "error": "At least one filer is required (or Reset)",
+                    },
                     400,
                 )
                 return
@@ -1662,8 +1815,8 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                         if "/" in fav_path.strip("/")
                         else ""
                     )
-                    label = _effective_filers().get(filer_key, {}).get(
-                        "label", filer_key
+                    label = (
+                        _effective_filers().get(filer_key, {}).get("label", filer_key)
                     )
                 else:
                     label = "Remote"
@@ -2573,9 +2726,7 @@ class FileServerHandler(http.server.SimpleHTTPRequestHandler):
                     if entry.is_file(follow_symlinks=False):
                         total += entry.stat(follow_symlinks=False).st_size
                     elif entry.is_dir(follow_symlinks=False) and depth > 1:
-                        total += FileServerHandler._dir_size(
-                            entry.path, depth - 1
-                        )
+                        total += FileServerHandler._dir_size(entry.path, depth - 1)
                 except (PermissionError, OSError):
                     pass
         except (PermissionError, OSError):

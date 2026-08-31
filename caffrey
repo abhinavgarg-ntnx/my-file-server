@@ -8,14 +8,16 @@
 #   caffrey status       check if running
 #   caffrey logs         tail the log file
 #   caffrey test         run foreground (debug mode)
+#
+# NOTE: ChartMuseum is no longer launched or managed here. Nuginix now owns
+# the ChartMuseum binary lifecycle (start/stop/restart from its UI) and proxies
+# it directly, so this launcher deliberately does not touch port 8089.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
 LOG="$LOG_DIR/server.log"
-CM_LOG="$LOG_DIR/chartmuseum.log"
 PIDFILE="$SCRIPT_DIR/server.pid"
-CM_PIDFILE="$SCRIPT_DIR/chartmuseum.pid"
 
 # Load .env if present
 if [ -f "$SCRIPT_DIR/.env" ]; then
@@ -26,10 +28,7 @@ fi
 
 export CFS_DIRECTORY="${CFS_DIRECTORY:-$HOME/my-server}"
 export CFS_PORT="${CFS_PORT:-8086}"
-export CFS_CM_PORT="${CFS_CM_PORT:-8089}"
 export CFS_LOG_DIR="$LOG_DIR"
-
-CM_STORAGE="${CFS_CM_STORAGE:-$CFS_DIRECTORY/helm-charts}"
 
 _kill_pid() {
     local pidfile="$1" label="$2"
@@ -53,47 +52,9 @@ _kill_pid() {
 }
 
 _stop() {
-    _kill_pid "$CM_PIDFILE" "ChartMuseum"
     _kill_pid "$PIDFILE" "File Server"
     lsof -ti:"$CFS_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
-    lsof -ti:"$CFS_CM_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
     sleep 1
-}
-
-_cm_start() {
-    if ! command -v chartmuseum &>/dev/null; then
-        echo "[!] chartmuseum binary not found — skipping"
-        return 0
-    fi
-    if [ -f "$CM_PIDFILE" ]; then
-        local pid; pid=$(cat "$CM_PIDFILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            echo "[=] ChartMuseum already running (PID $pid)"
-            return 0
-        fi
-        rm -f "$CM_PIDFILE"
-    fi
-
-    mkdir -p "$CM_STORAGE" "$LOG_DIR"
-
-    nohup chartmuseum \
-        --storage local \
-        --storage-local-rootdir "$CM_STORAGE" \
-        --port "$CFS_CM_PORT" \
-        --depth 0 \
-        >> "$CM_LOG" 2>&1 &
-    local pid=$!
-    echo "$pid" > "$CM_PIDFILE"
-
-    sleep 1
-    if kill -0 "$pid" 2>/dev/null; then
-        local host; host=$(hostname -f 2>/dev/null || hostname)
-        echo "[+] ChartMuseum running (PID $pid)"
-        echo "    Repo : http://${host}:${CFS_CM_PORT}"
-        echo "    Add  : helm repo add caffrey http://${host}:${CFS_CM_PORT}"
-    else
-        echo "[!] ChartMuseum failed to start. Check $CM_LOG"
-    fi
 }
 
 _start() {
@@ -101,15 +62,12 @@ _start() {
         local pid; pid=$(cat "$PIDFILE")
         if kill -0 "$pid" 2>/dev/null; then
             echo "[!] File Server already running (PID $pid). Use 'caffrey restart'."
-            _cm_start
             return 0
         fi
         rm -f "$PIDFILE"
     fi
 
     mkdir -p "$LOG_DIR" "$CFS_DIRECTORY"
-
-    _cm_start
 
     echo "[+] Starting Caffrey's File Server..."
     cd "$SCRIPT_DIR"
@@ -144,18 +102,6 @@ _status() {
     else
         echo "[-] File Server  not running"
     fi
-
-    if [ -f "$CM_PIDFILE" ]; then
-        local pid; pid=$(cat "$CM_PIDFILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            echo "[+] ChartMuseum  running  (PID $pid)  http://${host}:${CFS_CM_PORT}"
-        else
-            echo "[-] ChartMuseum  not running (stale PID)"
-            rm -f "$CM_PIDFILE"
-        fi
-    else
-        echo "[-] ChartMuseum  not running"
-    fi
 }
 
 _test() {
@@ -173,10 +119,9 @@ case "${1:-restart}" in
     status)             _status ;;
     test)               _test ;;
     logs|log)           tail -f "$LOG" ;;
-    cm-logs)            tail -f "$CM_LOG" ;;
     deploy|restart|"")  _stop; _start ;;
     *)
-        echo "Usage: caffrey [start|stop|restart|status|logs|cm-logs|test]"
+        echo "Usage: caffrey [start|stop|restart|status|logs|test]"
         exit 1
         ;;
 esac
